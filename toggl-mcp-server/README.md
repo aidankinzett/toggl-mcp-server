@@ -106,6 +106,7 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
 ### Prerequisites
 - Python 3.11+
 - Toggl Track account
+- uv installed for dependency management
 
 ### Environment Variables
 Create a `.env` file inside of the `mcp_toggl_server` folder with:
@@ -115,16 +116,33 @@ PASSWORD=your_toggl_password
 ```
 
 ### Installation
+
+First install uv:
+    - For MacOS/Linux:
+        ```bash
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        ```
+    - For Windows:
+        ```bash
+        powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+        ```
+
+Make sure to restart your terminal afterwards to ensure that the uv command gets picked up.
+
+Now let's clone the repository and set up the project:
+
 ```bash
 git clone [repository-url]
-pip install -r requirements.txt
+cd mcp_toggl_server
+uv venv
+uv pip install --all
 ```
 
 ### Integration with Development Tools
 
 #### VS Code + GitHub Copilot Setup
 
-1. Configure the MCP Server in `/.vscode/mcp.json`:
+1. Configure the MCP Server in `.vscode/mcp.json`:
 ```json
 "servers": {
   "toggl": {
