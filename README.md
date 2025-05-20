@@ -7,7 +7,9 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
 ### Tools
 
 #### Project Management
+
 - **create_project**
+
   - **Description**: Creates a new project in a specified Toggl workspace.
   - **Input**:
     - `name` (str): The name of the project to be created. This is a required field.
@@ -25,6 +27,7 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
   - **Output**: JSON response containing the data of the newly created project.
 
 - **delete_project**
+
   - **Description**: Deletes a project identified by its name within a specified workspace.
   - **Input**:
     - `project_name` (str): The exact name of the project to be deleted. This is a required field.
@@ -32,6 +35,7 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
   - **Output**: A confirmation message (str) indicating the successful deletion of the project.
 
 - **update_projects**
+
   - **Description**: Performs bulk updates on multiple projects within a specified workspace using patch operations.
   - **Input**:
     - `project_names` (List[str]): A list containing the names of the projects to be updated. This is a required field.
@@ -46,7 +50,9 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
   - **Output**: JSON response containing a list of project data objects found in the specified workspace.
 
 #### Time Entry Management
+
 - **new_time_entry**
+
   - **Description**: Creates a new time entry. Can be used to start a timer (if only `start` is provided or neither `start` nor `duration` are provided) or log a completed time entry (if `start` and `stop`, or `start` and `duration` are provided).
   - **Input**:
     - `description` (str): The description for the time entry.
@@ -61,12 +67,14 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
   - **Output**: JSON response containing the data of the created time entry.
 
 - **stop_time_entry**
+
   - **Description**: Stops the currently running time entry.
   - **Input**:
     - `workspace_name` (str, optional): Name of the workspace where the entry is running. Defaults to the user's default workspace.
   - **Output**: JSON response containing the data of the stopped time entry.
 
 - **delete_time_entry**
+
   - **Description**: Deletes a specific time entry by its description and start time.
   - **Input**:
     - `time_entry_description` (str): The exact description of the time entry to delete.
@@ -75,11 +83,13 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
   - **Output**: Success confirmation message (str) upon successful deletion.
 
 - **get_current_time_entry**
+
   - **Description**: Fetches the details of the currently running time entry.
   - **Input**: None (implicitly uses the user's context).
   - **Output**: JSON response containing the data of the currently running time entry, or None if no time entry is currently running.
 
 - **update_time_entry**
+
   - **Description**: Updates attributes of an existing time entry identified by its description and start time.
   - **Input**:
     - `time_entry_description` (str): The current description of the time entry to update.
@@ -104,28 +114,35 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
 ## Getting Started
 
 ### Prerequisites
+
 - Python 3.11+
 - Toggl Track account
 - uv installed for dependency management
 
 ### Environment Variables
-Create a `.env` file inside of the `mcp_toggl_server` folder with:
+
+Create a `.env` file inside of the `mcp_toggl_server` folder with either:
+
 ```bash
 EMAIL=your_toggl_email
 PASSWORD=your_toggl_password
 ```
 
+or
+
+```bash
+TOGGL_API_TOKEN=***
+```
+
 ### Installation
 
-First install uv:
-    - For MacOS/Linux:
-        ```bash
+First install uv: - For MacOS/Linux:
+`bash
         curl -LsSf https://astral.sh/uv/install.sh | sh
-        ```
-    - For Windows:
-        ```bash
+        ` - For Windows:
+`bash
         powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-        ```
+        `
 
 Make sure to restart your terminal afterwards to ensure that the uv command gets picked up.
 
@@ -133,9 +150,10 @@ Now let's clone the repository and set up the project:
 
 ```bash
 git clone [repository-url]
-cd mcp_toggl_server
+cd toggl-mcp-server/toggl-mcp-server
 uv venv
-uv pip install --all
+source .venv/bin/activate
+uv sync
 ```
 
 ### Integration with Development Tools
@@ -143,6 +161,7 @@ uv pip install --all
 #### VS Code + GitHub Copilot Setup
 
 1. Configure the MCP Server in `.vscode/mcp.json`:
+
 ```json
 "servers": {
   "toggl": {
@@ -150,16 +169,17 @@ uv pip install --all
     "command": "uv",
     "args": [
       "--directory",
-      "/ABSOLUTE/PATH/TO/PARENT/FOLDER/mcp_toggl_server",
+      "/ABSOLUTE/PATH/TO/PARENT/FOLDER/toggl-mcp-server",
       "run",
       "toggl_mcp_server.py"],
-    "envFile": "${workspaceFolder}/mcp_toggl_server/.env"
+    "envFile": "/ABSOLUTE/PATH/TO/PARENT/FOLDER/toggl-mcp-server/.env"
   }
 }
 ```
 
 2. Update the configuration:
-   - Replace `/ABSOLUTE/PATH/TO/PARENT/FOLDER/mcp_toggl_server` with the absolute path to the server
+
+   - Replace `/ABSOLUTE/PATH/TO/PARENT/FOLDER/toggl-mcp-server` with the absolute path to the server
    - You may need to put the full path to the uv executable in the command field. You can get this by running which uv on MacOS/Linux or where uv on Windows
 
 3. Enable the server:
@@ -168,6 +188,7 @@ uv pip install --all
    - Switch to agent mode in Copilot
 
 For detailed setup instructions, see:
+
 - [MCP Servers in VS Code](https://code.visualstudio.com/docs/copilot/chat/mcp-servers)
 - [Copilot Agent Mode](https://code.visualstudio.com/docs/copilot/chat/chat-agent-mode)
 
@@ -181,7 +202,9 @@ The Toggl MCP Server works with any MCP-compatible client. For integration steps
 Note: Configuration typically involves specifying the server path and environment variables similar to the VS Code setup above.
 
 ### Testing with MCP Inspector
+
 To run in development:
+
 ```bash
 EMAIL=your_toggl_email PASSWORD=your_toggl_password mcp dev toggl_mcp_server.py
 ```

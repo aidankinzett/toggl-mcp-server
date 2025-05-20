@@ -12,11 +12,20 @@ load_dotenv()
 
 auth_email = os.getenv("EMAIL")
 auth_password = os.getenv("PASSWORD") 
+auth_token = os.getenv("TOGGL_API_TOKEN")
+
+if not auth_token and not (auth_email and auth_password):
+    raise ValueError("Authentication credentials missing. Please provide either TOGGL_API_TOKEN or both EMAIL and PASSWORD in .env file")
+
 
 mcp = FastMCP("toggl")
 
-auth_credentials = f"{os.getenv('EMAIL')}:{os.getenv('PASSWORD')}".encode('utf-8')
-auth_header = f"Basic {b64encode(auth_credentials).decode('ascii')}"
+if (auth_email and auth_password):
+    auth_credentials = f"{auth_email}:{auth_password}".encode('utf-8')
+    auth_header = f"Basic {b64encode(auth_credentials).decode('ascii')}"
+else:
+    auth_credentials = f"{auth_token}:api_token".encode('utf-8')
+    auth_header = f"Basic {b64encode(auth_credentials).decode('ascii')}"
 
 headers={
     "Content-Type": "application/json",
