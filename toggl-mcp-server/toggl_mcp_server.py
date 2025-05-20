@@ -17,8 +17,13 @@ auth_token = os.getenv("TOGGL_API_TOKEN")
 if not auth_token and not (auth_email and auth_password):
     raise ValueError("Authentication credentials missing. Please provide either TOGGL_API_TOKEN or both EMAIL and PASSWORD in .env file")
 
+system_instructions = """
+<timezone_info>
+The MCP server for Toggl returns timestamps in both UTC format and the user's local timezone. When displaying times to users, always prefer using the local time values provided by the server, which will be shown in fields ending with "_local" or within the "timezone_info" section of responses.
+</timezone_info>
+"""
 
-mcp = FastMCP("toggl")
+mcp = FastMCP("toggl", system_instructions=system_instructions)
 
 if (auth_email and auth_password):
     auth_credentials = f"{auth_email}:{auth_password}".encode('utf-8')
@@ -54,6 +59,27 @@ TOGGL_COLORS = Literal[
 # HELPERS - TIME Specific
 ########################
 
+try:
+    LOCAL_TZ = get_localzone()
+    print(f"Using system timezone: {LOCAL_TZ}")
+except Exception as e:
+    print(f"Warning: Failed to get system timezone: {e}, falling back to UTC")
+    LOCAL_TZ = datetime.timezone.utc
+
+def _get_timezone_info() -> dict:
+    """
+    Get information about the system timezone.
+    
+    Returns:
+        dict: Information about the timezone including name, offset from UTC
+    """
+    now = datetime.datetime.now(LOCAL_TZ)
+    return {
+        "timezone_name": str(LOCAL_TZ),
+        "timezone_offset": now.strftime("%z"),
+        "current_time": now.strftime("%Y-%m-%d %H:%M:%S %Z")
+    }
+
 def _get_current_utc_time() -> str:
     """
     Get the current UTC time formatted as an ISO 8601 timestamp with milliseconds and 'Z' suffix.
@@ -68,26 +94,34 @@ def _get_current_utc_time() -> str:
 
 def _convert_utc_to_local(utc_iso_time: str) -> str:
     """
-    Convert an RFC 3339 UTC timestamp string to the local system time and format it with timezone.
+    Convert an RFC 3339 UTC timestamp string to the user's local system time.
 
     Args:
         utc_iso_time (str): A UTC timestamp string (e.g., '2025-04-09T15:37:50.000Z').
 
     Returns:
         str: A human-readable local time string with timezone info. 
-             Example: '2025-04-09 21:07:50 IST'
+             Example: '2025-04-10 01:37:50 AEST'
     """
     try:
-        if "." in utc_iso_time:
-            utc_time = datetime.datetime.strptime(utc_iso_time, "%Y-%m-%dT%H:%M:%S.%fZ")
+        # Handle various UTC timestamp formats
+        if utc_iso_time.endswith('Z'):
+            if "." in utc_iso_time:
+                utc_time = datetime.datetime.strptime(utc_iso_time, "%Y-%m-%dT%H:%M:%S.%fZ")
+            else:
+                utc_time = datetime.datetime.strptime(utc_iso_time, "%Y-%m-%dT%H:%M:%SZ")
+        elif "+" in utc_iso_time:
+            utc_time = datetime.datetime.fromisoformat(utc_iso_time.replace('Z', '+00:00'))
         else:
-            utc_time = datetime.datetime.strptime(utc_iso_time, "%Y-%m-%dT%H:%M:%SZ")
+            # Assume UTC if no timezone specified
+            utc_time = datetime.datetime.fromisoformat(utc_iso_time)
+            
     except ValueError as e:
         return f"Invalid timestamp format: {e}"
 
     utc_time = utc_time.replace(tzinfo=datetime.timezone.utc)
-    local_tz = get_localzone()
-    local_time = utc_time.astimezone(local_tz)
+    # Use the system's local timezone
+    local_time = utc_time.astimezone(LOCAL_TZ)
     return local_time.strftime("%Y-%m-%d %H:%M:%S %Z")
 
 def _iso_timestamp(dt: datetime.datetime) -> str:
@@ -96,17 +130,24 @@ def _iso_timestamp(dt: datetime.datetime) -> str:
 
 def _get_date_range(days_offset: int) -> Tuple[str, str]:
     """
-    Returns start and end ISO timestamps for a given day.
+    Returns start and end ISO timestamps for a given day based on local system time.
     
-    days_offset = 0: today
-    days_offset = -1: yesterday
+    days_offset = 0: today in local time
+    days_offset = -1: yesterday in local time
     """
-    # get UTC date today at midnight
-    today_utc = datetime.datetime.utcnow().date()
-    target_date = today_utc + timedelta(days=days_offset)
-    start_dt = datetime.datetime.combine(target_date, datetime.time.min, tzinfo=timezone.utc)
-    end_dt = start_dt + timedelta(days=1)
-    return _iso_timestamp(start_dt), _iso_timestamp(end_dt)
+    # Get current date in local time
+    local_now = datetime.datetime.now(LOCAL_TZ)
+    target_date = local_now.date() + timedelta(days=days_offset)
+    
+    # Create datetime at midnight local time
+    start_dt_local = datetime.datetime.combine(target_date, datetime.time.min, tzinfo=LOCAL_TZ)
+    end_dt_local = start_dt_local + timedelta(days=1)
+    
+    # Convert to UTC for API call
+    start_dt_utc = start_dt_local.astimezone(timezone.utc)
+    end_dt_utc = end_dt_local.astimezone(timezone.utc)
+    
+    return _iso_timestamp(start_dt_utc), _iso_timestamp(end_dt_utc)
 
 
 ########################
@@ -1141,8 +1182,18 @@ async def get_current_time_entry() -> Union[dict, str]:
 
     if isinstance(current_time_entry_data, str):
         return current_time_entry_data
-
-    return current_time_entry_data
+    
+    response = {
+        "time_entry": current_time_entry_data,
+        "timezone_info": _get_timezone_info()
+    }
+    
+    if "start" in current_time_entry_data and current_time_entry_data["start"]:
+        response["time_entry"]["start_local"] = _convert_utc_to_local(current_time_entry_data["start"])
+    if "stop" in current_time_entry_data and current_time_entry_data["stop"]:
+        response["time_entry"]["stop_local"] = _convert_utc_to_local(current_time_entry_data["stop"])
+    
+    return response
 
 @mcp.tool()
 async def updating_time_entry(time_entry_name: str, 
@@ -1242,7 +1293,18 @@ async def get_time_entries_for_range(
         return start_time <= entry_start <= end_time
 
     filtered = [entry for entry in all_entries if _in_range(entry)]
-    return filtered
+
+    for entry in filtered:
+        if "start" in entry and entry["start"]:
+            entry["start_local"] = _convert_utc_to_local(entry["start"])
+        if "stop" in entry and entry["stop"]:
+            entry["stop_local"] = _convert_utc_to_local(entry["stop"])
+    
+    # Return with timezone info
+    return {
+        "time_entries": filtered,
+        "timezone_info": _get_timezone_info()
+    }
 
 if __name__ == "__main__":
     mcp.run()
