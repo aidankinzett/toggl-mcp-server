@@ -2,7 +2,8 @@
 Helper functions for Toggl time entries.
 
 This module provides functions for managing Toggl time entries, including
-creating, stopping, deleting, and updating time entries.
+creating, stopping, deleting, and updating time entries, as well as
+bulk operations for multiple time entries.
 """
 
 from typing import List, Union, Dict, Any, Optional, Tuple
@@ -222,3 +223,181 @@ async def get_time_entries_in_range(
         return start_time <= entry_start <= end_time
 
     return [entry for entry in all_entries if _in_range(entry)]
+
+async def bulk_create_time_entries(
+    client: TogglApiClient,
+    workspace_id: int,
+    entries: List[Dict[str, Any]]
+) -> Union[Dict[str, Any], str]:
+    """
+    Creates multiple time entries in a single operation.
+    
+    Args:
+        client: The Toggl API client
+        workspace_id: The workspace ID
+        entries: List of time entry data dictionaries, each containing:
+            - description: Activity being tracked
+            - tags: List of tags to associate (optional)
+            - project_id: Associated project ID (optional)
+            - start: UTC start timestamp (RFC3339)
+            - stop: UTC stop timestamp (optional)
+            - duration: Duration in seconds (optional, use -1 for running entry)
+            - billable: Whether the task is billable (optional)
+            
+    Returns:
+        Dict: Dictionary containing created entries and metadata
+        str: Error message on failure
+    """
+    if workspace_id is None:
+        return "Error: workspace_id must be provided to bulk_create_time_entries."
+    
+    # Process and create entries one by one but handle as a batch
+    results = []
+    errors = []
+    current_local_time = tz_converter.utc_to_local(tz_converter.get_current_utc_time())
+    
+    for entry_data in entries:
+        # Prepare the entry data
+        payload = {
+            "created_with": "toggl_mcp_server",
+            "description": entry_data.get("description"),
+            "tags": entry_data.get("tags"),
+            "project_id": entry_data.get("project_id"),
+            "start": entry_data.get("start"),
+            "stop": entry_data.get("stop"),
+            "duration": entry_data.get("duration", -1),
+            "billable": entry_data.get("billable", False),
+            "workspace_id": workspace_id
+        }
+        
+        # If no start time provided, use current time
+        if not payload["start"]:
+            payload["start"] = tz_converter.get_current_utc_time()
+        
+        # Create the time entry
+        endpoint = f"/workspaces/{workspace_id}/time_entries"
+        response = await client.post(endpoint, payload)
+        
+        if isinstance(response, str):  # Error message
+            errors.append({"data": entry_data, "error": response})
+        else:
+            results.append(response)
+    
+    # Return combined results
+    if errors:
+        return {
+            "success": results,
+            "errors": errors,
+            "time": current_local_time
+        }
+    
+    return {
+        "entries": results,
+        "time": current_local_time
+    }
+
+async def bulk_update_time_entries(
+    client: TogglApiClient,
+    workspace_id: int,
+    entries: List[Dict[str, Any]]
+) -> Union[Dict[str, Any], str]:
+    """
+    Updates multiple time entries in a single operation.
+    
+    Args:
+        client: The Toggl API client
+        workspace_id: The workspace ID
+        entries: List of time entry update data, each containing:
+            - id: Time entry ID to update
+            - description: Updated description (optional)
+            - tags: Updated tags (optional)
+            - project_id: Updated project ID (optional)
+            - start: Updated start time (optional)
+            - stop: Updated stop time (optional)
+            - duration: Updated duration (optional)
+            - billable: Updated billable status (optional)
+            
+    Returns:
+        Dict: Dictionary containing success and error results
+        str: Error message on failure
+    """
+    if workspace_id is None:
+        return "Error: workspace_id must be provided to bulk_update_time_entries."
+    
+    results = []
+    errors = []
+    
+    for entry_data in entries:
+        entry_id = entry_data.get("id")
+        if not entry_id:
+            errors.append({"data": entry_data, "error": "Missing time entry ID"})
+            continue
+        
+        # Prepare update payload (only include fields to update)
+        payload = {
+            "created_with": "toggl_mcp_server"
+        }
+        
+        # Add optional fields if they exist
+        for field in ["description", "tags", "project_id", "start", "stop", "duration", "billable"]:
+            if field in entry_data:
+                payload[field] = entry_data[field]
+        
+        # Update the time entry
+        endpoint = f"/workspaces/{workspace_id}/time_entries/{entry_id}"
+        response = await client.put(endpoint, payload)
+        
+        if isinstance(response, str):  # Error message
+            errors.append({"id": entry_id, "error": response})
+        else:
+            results.append(response)
+    
+    # Return combined results
+    if errors:
+        return {
+            "success": results,
+            "errors": errors
+        }
+    
+    return {
+        "entries": results
+    }
+
+async def bulk_delete_time_entries(
+    client: TogglApiClient,
+    workspace_id: int,
+    time_entry_ids: List[int]
+) -> Dict[str, Any]:
+    """
+    Deletes multiple time entries in a single operation.
+    
+    Args:
+        client: The Toggl API client
+        workspace_id: The workspace ID
+        time_entry_ids: List of time entry IDs to delete
+        
+    Returns:
+        Dict: Dictionary containing success and error results
+    """
+    if workspace_id is None:
+        return {"error": "Error: workspace_id must be provided to bulk_delete_time_entries."}
+    
+    results = []
+    errors = []
+    
+    for entry_id in time_entry_ids:
+        endpoint = f"/workspaces/{workspace_id}/time_entries/{entry_id}"
+        response = await client.delete(endpoint)
+        
+        if isinstance(response, int):  # Success (HTTP status code)
+            results.append({"id": entry_id, "status": response})
+        else:  # Error message
+            errors.append({"id": entry_id, "error": response})
+    
+    # Return combined results
+    return {
+        "success": results,
+        "errors": errors,
+        "success_count": len(results),
+        "error_count": len(errors)
+    }

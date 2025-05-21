@@ -16,7 +16,10 @@ from helpers.time_entries import (
     delete_time_entry as helper_delete_time_entry,
     get_current_time_entry as helper_get_current_time_entry,
     update_time_entry as helper_update_time_entry,
-    get_time_entries_in_range
+    get_time_entries_in_range,
+    bulk_create_time_entries as helper_bulk_create_time_entries,
+    bulk_update_time_entries as helper_bulk_update_time_entries,
+    bulk_delete_time_entries as helper_bulk_delete_time_entries
 )
 from helpers.projects import get_project_id_by_name
 from helpers.workspaces import get_default_workspace_id, get_workspace_id_by_name
@@ -385,3 +388,281 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
             "time_entries": enriched_entries,
             "timezone_info": tz_converter.get_timezone_info()
         }
+        
+    @mcp.tool()
+    async def bulk_create_time_entries(
+        entries: List[Dict[str, Any]],
+        workspace_name: Optional[str] = None
+    ) -> Union[Dict[str, Any], str]:
+        """
+        Create multiple time entries in one operation. This is useful for batch logging 
+        several activities at once.
+        
+        If `workspace_name` is not provided, set it as None.
+        
+        Example use cases:
+        - Log multiple work segments from a day
+        - Import time entries from another system
+        - Record multiple similar activities with slight differences
+        
+        Args:
+            entries: List of time entry objects, each containing:
+                - description: Activity description (optional)
+                - tags: List of tags (optional)
+                - project_name: Name of the project (optional)
+                - start: Start time in local timezone (optional)
+                - stop: Stop time in local timezone (optional)
+                - duration: Duration in seconds (optional)
+                - billable: Whether entry is billable (optional)
+            workspace_name: Name of the workspace (defaults to user's default)
+            
+        Returns:
+            Dict: Results of the bulk creation operation
+            str: Error message if the operation fails
+        """
+        # Get workspace ID
+        if workspace_name is None:
+            workspace_id = await get_default_workspace_id(api_client)
+        else:
+            workspace_id = await get_workspace_id_by_name(api_client, workspace_name)
+            
+        if isinstance(workspace_id, str):
+            return workspace_id
+            
+        # Process entries to convert project names to IDs and timestamps
+        processed_entries = []
+        for entry in entries:
+            processed_entry = entry.copy()
+            
+            # Convert project name to ID if provided
+            if "project_name" in entry and entry["project_name"]:
+                project_id = await get_project_id_by_name(
+                    api_client, 
+                    entry["project_name"], 
+                    workspace_id
+                )
+                
+                if isinstance(project_id, str):  # Error 
+                    return f"Error with project '{entry['project_name']}': {project_id}"
+                    
+                processed_entry["project_id"] = project_id
+                del processed_entry["project_name"]
+                
+            # Convert timestamps from local to UTC
+            if "start" in entry and entry["start"]:
+                utc_start, start_debug = tz_converter.local_to_utc(entry["start"])
+                processed_entry["start"] = utc_start
+                
+            if "stop" in entry and entry["stop"]:
+                utc_stop, stop_debug = tz_converter.local_to_utc(entry["stop"])
+                processed_entry["stop"] = utc_stop
+                
+            processed_entries.append(processed_entry)
+            
+        # Call helper function to create entries
+        result = await helper_bulk_create_time_entries(
+            client=api_client,
+            workspace_id=workspace_id,
+            entries=processed_entries
+        )
+        
+        if isinstance(result, str):
+            return result
+            
+        # Enrich response entries with local time
+        if "entries" in result:
+            result["entries"] = [
+                tz_converter.enrich_time_entry_with_local_times(entry)
+                for entry in result["entries"]
+            ]
+            
+        if "success" in result:
+            result["success"] = [
+                tz_converter.enrich_time_entry_with_local_times(entry)
+                for entry in result["success"]
+            ]
+            
+        result["timezone_info"] = tz_converter.get_timezone_info()
+        return result
+        
+    @mcp.tool()
+    async def bulk_update_time_entries(
+        entries: List[Dict[str, Any]],
+        workspace_name: Optional[str] = None
+    ) -> Union[Dict[str, Any], str]:
+        """
+        Update multiple time entries at once.
+        
+        If `workspace_name` is not provided, set it as None.
+        
+        This is useful for making the same changes to multiple entries or updating
+        several entries at once.
+        
+        Each entry in the list must include either an "id" field or a "description" field
+        to identify which time entry to update.
+        
+        Args:
+            entries: List of time entry update objects, each containing:
+                - id: Time entry ID to update, or
+                - description: Time entry description to identify
+                And any of the following fields to update:
+                - new_description: New description
+                - tags: New list of tags
+                - project_name: New project name
+                - start: New start time (local timezone)
+                - stop: New stop time (local timezone)
+                - duration: New duration in seconds
+                - billable: New billable status
+            workspace_name: Name of workspace (defaults to user's default)
+            
+        Returns:
+            Dict: Results of the bulk update operation
+            str: Error message if operation fails
+        """
+        # Get workspace ID
+        if workspace_name is None:
+            workspace_id = await get_default_workspace_id(api_client)
+        else:
+            workspace_id = await get_workspace_id_by_name(api_client, workspace_name)
+            
+        if isinstance(workspace_id, str):
+            return workspace_id
+            
+        # Process entries to resolve IDs, project names, timestamps
+        processed_entries = []
+        for entry in entries:
+            processed_entry = {}
+            
+            # Get entry ID either directly or by description
+            if "id" in entry:
+                processed_entry["id"] = entry["id"]
+            elif "description" in entry:
+                entry_id = await get_time_entry_id_by_name(
+                    api_client,
+                    entry["description"],
+                    workspace_id
+                )
+                
+                if isinstance(entry_id, str):  # Error
+                    return f"Error identifying entry '{entry['description']}': {entry_id}"
+                    
+                processed_entry["id"] = entry_id
+            else:
+                return "Each entry must contain either 'id' or 'description' to identify the time entry"
+                
+            # Handle description update
+            if "new_description" in entry:
+                processed_entry["description"] = entry["new_description"]
+                
+            # Copy over simple fields
+            for field in ["tags", "duration", "billable"]:
+                if field in entry:
+                    processed_entry[field] = entry[field]
+                    
+            # Convert project name to ID if provided
+            if "project_name" in entry:
+                project_id = await get_project_id_by_name(
+                    api_client,
+                    entry["project_name"],
+                    workspace_id
+                )
+                
+                if isinstance(project_id, str):  # Error
+                    return f"Error with project '{entry['project_name']}': {project_id}"
+                    
+                processed_entry["project_id"] = project_id
+                
+            # Convert timestamps from local to UTC
+            if "start" in entry:
+                utc_start, _ = tz_converter.local_to_utc(entry["start"])
+                processed_entry["start"] = utc_start
+                
+            if "stop" in entry:
+                utc_stop, _ = tz_converter.local_to_utc(entry["stop"])
+                processed_entry["stop"] = utc_stop
+                
+            processed_entries.append(processed_entry)
+            
+        # Call helper function to update entries
+        result = await helper_bulk_update_time_entries(
+            client=api_client,
+            workspace_id=workspace_id,
+            entries=processed_entries
+        )
+        
+        if isinstance(result, str):
+            return result
+            
+        # Enrich response entries with local time
+        if "entries" in result:
+            result["entries"] = [
+                tz_converter.enrich_time_entry_with_local_times(entry)
+                for entry in result["entries"]
+            ]
+            
+        if "success" in result:
+            result["success"] = [
+                tz_converter.enrich_time_entry_with_local_times(entry)
+                for entry in result["success"]
+            ]
+            
+        result["timezone_info"] = tz_converter.get_timezone_info()
+        return result
+        
+    @mcp.tool()
+    async def bulk_delete_time_entries(
+        entry_identifiers: List[Union[int, str]],
+        are_descriptions: bool = False,
+        workspace_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Delete multiple time entries in one operation.
+        
+        If `workspace_name` is not provided, set it as None.
+        
+        This allows you to remove multiple entries at once, either by their IDs
+        or by their descriptions.
+        
+        Args:
+            entry_identifiers: List of time entry IDs or descriptions
+            are_descriptions: Whether the identifiers are descriptions (True) or IDs (False)
+            workspace_name: Name of workspace (defaults to user's default)
+            
+        Returns:
+            Dict: Results of the deletion operation
+        """
+        # Get workspace ID
+        if workspace_name is None:
+            workspace_id = await get_default_workspace_id(api_client)
+        else:
+            workspace_id = await get_workspace_id_by_name(api_client, workspace_name)
+            
+        if isinstance(workspace_id, str):
+            return {"error": workspace_id}
+            
+        # Convert descriptions to IDs if needed
+        entry_ids = []
+        if are_descriptions:
+            for description in entry_identifiers:
+                entry_id = await get_time_entry_id_by_name(
+                    api_client,
+                    description,
+                    workspace_id
+                )
+                
+                if isinstance(entry_id, str):  # Error
+                    return {"error": f"Error identifying entry '{description}': {entry_id}"}
+                    
+                entry_ids.append(entry_id)
+        else:
+            # Assume the identifiers are already IDs
+            entry_ids = [int(id) for id in entry_identifiers]
+            
+        # Call helper function to delete entries
+        result = await helper_bulk_delete_time_entries(
+            client=api_client,
+            workspace_id=workspace_id,
+            time_entry_ids=entry_ids
+        )
+        
+        return result
