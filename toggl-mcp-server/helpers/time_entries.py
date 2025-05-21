@@ -529,7 +529,7 @@ async def get_work_context(client: TogglApiClient) -> Union[Dict[str, Any], str]
             # Create lookup by ID
             for project in projects_response:
                 project_id = project.get("id")
-                if project_id in project_durations:
+                if project_id is not None and project_id in project_durations:
                     projects_info[project_id] = {
                         "name": project.get("name"),
                         "color": project.get("color"),
@@ -555,14 +555,16 @@ async def get_work_context(client: TogglApiClient) -> Union[Dict[str, Any], str]
     recent_entries_count = len(recent_entries)
     
     # Build complete context
+    has_current_entry = current_entry is not None and not isinstance(current_entry, str)
+    
     context = {
-        "current_time_entry": current_entry if not isinstance(current_entry, str) else None,
-        "current_activity": None if isinstance(current_entry, str) else {
+        "current_time_entry": current_entry if has_current_entry else None,
+        "current_activity": None if not has_current_entry else {
             "description": current_entry.get("description", "No description"),
             "project": None,
             "started_at": current_entry.get("start"),
-            "started_at_local": tz_converter.utc_to_local(current_entry.get("start")),
-            "duration_so_far": abs(current_entry.get("duration", 0)) if current_entry.get("duration", 0) < 0 else None
+            "started_at_local": tz_converter.utc_to_local(current_entry.get("start")) if current_entry.get("start") else None,
+            "duration_so_far": abs(current_entry.get("duration", 0)) if current_entry and current_entry.get("duration", 0) < 0 else None
         },
         "recent_work_summary": {
             "period": "Last 7 days",
@@ -774,11 +776,43 @@ async def duplicate_time_entry(
     if entry_to_duplicate is None:
         return f"Error: No time entry found with ID {time_entry_id}"
     
-    # Calculate duration if both start and stop are provided
-    duration = entry_to_duplicate.get("duration")
+    # Determine which parameters to use for the time period
+    final_start = start or entry_to_duplicate.get("start")
+    final_stop = None
+    final_duration = None
+    
+    # Case 1: Both new start and stop provided - use those and let API calculate duration
     if start and stop:
-        # Let the API calculate the duration
-        duration = None
+        final_stop = stop
+        # Don't set duration when providing both start and stop
+    
+    # Case 2: Only new start provided - check if original had stop or was running
+    elif start and not stop:
+        original_duration = entry_to_duplicate.get("duration")
+        if original_duration and original_duration > 0:
+            # Original was a completed entry with duration - keep the duration
+            final_duration = original_duration
+        elif original_duration and original_duration < 0:
+            # Original was a running entry - keep it running
+            final_duration = -1
+        else:
+            # Fall back to original stop time if available
+            final_stop = entry_to_duplicate.get("stop")
+    
+    # Case 3: Only new stop provided - use original start
+    elif not start and stop:
+        final_stop = stop
+        # Don't set duration when providing stop
+    
+    # Case 4: Neither new start nor stop - use original settings
+    else:
+        original_stop = entry_to_duplicate.get("stop")
+        original_duration = entry_to_duplicate.get("duration")
+        
+        if original_stop:
+            final_stop = original_stop
+        else:
+            final_duration = original_duration
     
     # Create the duplicate entry
     workspace_id = entry_to_duplicate.get("workspace_id")
@@ -789,9 +823,9 @@ async def duplicate_time_entry(
         description=entry_to_duplicate.get("description"),
         tags=entry_to_duplicate.get("tags"),
         project_id=entry_to_duplicate.get("project_id"),
-        start=start or entry_to_duplicate.get("start"),
-        stop=stop or entry_to_duplicate.get("stop"),
-        duration=duration,
+        start=final_start,
+        stop=final_stop,
+        duration=final_duration,
         billable=entry_to_duplicate.get("billable", False)
     )
     

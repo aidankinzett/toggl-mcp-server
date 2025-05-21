@@ -914,40 +914,53 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
         result = context_data.copy()
         
         # Generate a natural language summary based on the context
-        is_tracking = (context_data["current_activity"] is not None)
-        has_recent_entries = (context_data["recent_work_summary"]["total_entries"] > 0)
+        is_tracking = context_data.get("current_activity") is not None
+        has_recent_entries = context_data.get("recent_work_summary", {}).get("total_entries", 0) > 0
         
         summary = []
         
-        if is_tracking:
+        if is_tracking and "current_activity" in context_data:
             current = context_data["current_activity"]
-            description = current["description"]
-            
-            # Get project name if available
-            project_name = "no project"
-            if context_data["current_time_entry"].get("project_id"):
-                for project in context_data["recent_work_summary"].get("most_used_projects", []):
-                    if project.get("project_id") == context_data["current_time_entry"].get("project_id"):
-                        project_name = project.get("name", "unnamed project")
-                        break
-                        
-            start_time = current.get("started_at_local", "unknown time")
-            
-            summary.append(f"You are currently tracking '{description}' on {project_name} since {start_time}.")
+            if not isinstance(current, dict):
+                # Handle unexpected type
+                summary.append("You are currently tracking time, but details could not be retrieved.")
+            else:
+                description = current.get("description", "unknown activity")
+                
+                # Get project name if available
+                project_name = "no project"
+                if context_data.get("current_time_entry") and context_data["current_time_entry"].get("project_id"):
+                    current_project_id = context_data["current_time_entry"].get("project_id")
+                    # First look in most_used_projects
+                    for project in context_data.get("recent_work_summary", {}).get("most_used_projects", []):
+                        # The id is stored differently depending on the source
+                        if project.get("id") == current_project_id or project.get("project_id") == current_project_id:
+                            project_name = project.get("name", "unnamed project")
+                            break
+                            
+                start_time = current.get("started_at_local", "unknown time")
+                
+                summary.append(f"You are currently tracking '{description}' on {project_name} since {start_time}.")
         else:
             summary.append("You are not currently tracking any time.")
             
         if has_recent_entries:
-            hours = context_data["recent_work_summary"]["total_hours_tracked"]
-            entries = context_data["recent_work_summary"]["total_entries"]
+            recent_summary = context_data.get("recent_work_summary", {})
+            hours = recent_summary.get("total_hours_tracked", 0)
+            entries = recent_summary.get("total_entries", 0)
             
             summary.append(f"In the last 7 days, you've tracked {hours} hours across {entries} time entries.")
             
-            if context_data["recent_work_summary"].get("most_used_projects"):
-                top_project = context_data["recent_work_summary"]["most_used_projects"][0]
-                top_project_hours = round(top_project["duration"] / 3600, 1)
-                
-                summary.append(f"Your most active project is '{top_project['name']}' with {top_project_hours} hours.")
+            most_used_projects = recent_summary.get("most_used_projects", [])
+            if most_used_projects and len(most_used_projects) > 0:
+                try:
+                    top_project = most_used_projects[0]
+                    top_project_hours = round(top_project.get("duration", 0) / 3600, 1)
+                    
+                    summary.append(f"Your most active project is '{top_project.get('name', 'unknown')}' with {top_project_hours} hours.")
+                except (IndexError, KeyError, TypeError) as e:
+                    # Handle potential errors safely
+                    pass
                 
         result["natural_language_summary"] = summary
         
@@ -1069,6 +1082,12 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
         This tool creates a new time entry with the same attributes as an
         existing one, optionally with different start and end times.
         
+        IMPORTANT: You can use the following combinations:
+        1. Provide no time parameters to create an exact duplicate
+        2. Provide only start_time to create a duplicate starting at that time 
+        3. Provide only end_time to create a duplicate ending at that time
+        4. Provide both start_time and end_time for a duplicate with a specific time range
+        
         Args:
             time_entry_id: ID of the time entry to duplicate
             start_time: Optional custom start time in local timezone
@@ -1078,6 +1097,13 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
             Dict: Information about the new duplicated entry
             str: Error message if duplication fails
         """
+        # Validation: Check for invalid parameter combinations 
+        if (start_time and not start_time.strip()) or (end_time and not end_time.strip()):
+            return {
+                "error": "Invalid empty time string provided",
+                "help": "Please provide valid time values in ISO format (e.g., '2025-05-21T14:30:00')"
+            }
+            
         # Convert times from local to UTC if provided
         utc_start = None
         if start_time:
@@ -1087,7 +1113,7 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
         if end_time:
             utc_end, _ = tz_converter.local_to_utc(end_time)
             
-        # Call helper function
+        # Call helper function with improved parameters
         result = await helper_duplicate_time_entry(
             client=api_client,
             time_entry_id=time_entry_id,
