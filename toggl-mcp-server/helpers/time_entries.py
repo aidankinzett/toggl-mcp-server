@@ -647,6 +647,231 @@ async def continue_previous_work(
         
     return "Error: Could not find the time entry to continue"
 
+async def resume_time_entry(
+    client: TogglApiClient,
+    time_entry_id: int
+) -> Union[Dict[str, Any], str]:
+    """
+    Resumes a stopped time entry by creating a new one with the same attributes.
+    
+    This is similar to continue_previous_work but specifically designed for
+    resuming a previously stopped time entry.
+    
+    Args:
+        client: The Toggl API client
+        time_entry_id: ID of the entry to resume
+        
+    Returns:
+        Dict: The new time entry that was created
+        str: Error message if resumption fails
+    """
+    # Get all time entries and find the one with matching ID
+    all_entries = await client.get("/me/time_entries")
+    
+    if isinstance(all_entries, str):
+        return f"Error retrieving time entries: {all_entries}"
+        
+    entry_to_resume = None
+    for entry in all_entries:
+        if entry.get("id") == time_entry_id:
+            entry_to_resume = entry
+            break
+            
+    if entry_to_resume is None:
+        return f"Error: No time entry found with ID {time_entry_id}"
+    
+    # Check if the entry is already running (has negative duration)
+    if entry_to_resume.get("duration", 0) < 0:
+        return f"Error: Time entry with ID {time_entry_id} is already running"
+    
+    # Start a new entry with the same attributes
+    workspace_id = entry_to_resume.get("workspace_id")
+    
+    result = await new_time_entry(
+        client=client,
+        workspace_id=workspace_id,
+        description=entry_to_resume.get("description"),
+        tags=entry_to_resume.get("tags"),
+        project_id=entry_to_resume.get("project_id"),
+        billable=entry_to_resume.get("billable", False)
+    )
+    
+    if isinstance(result, str):
+        return f"Error creating new time entry: {result}"
+        
+    return {
+        "new_time_entry": result[0],
+        "resumed_from": entry_to_resume,
+        "local_time": result[1]
+    }
+
+async def duplicate_time_entry(
+    client: TogglApiClient,
+    time_entry_id: int,
+    start: Optional[str] = None,
+    stop: Optional[str] = None
+) -> Union[Dict[str, Any], str]:
+    """
+    Creates an exact duplicate of an existing time entry.
+    
+    This function creates a new time entry with the same attributes as
+    an existing one, but potentially with different start and stop times.
+    
+    Args:
+        client: The Toggl API client
+        time_entry_id: ID of the entry to duplicate
+        start: Optional new start time (UTC format)
+        stop: Optional new stop time (UTC format)
+        
+    Returns:
+        Dict: The duplicated time entry
+        str: Error message if duplication fails
+    """
+    # Get all time entries and find the one with matching ID
+    all_entries = await client.get("/me/time_entries")
+    
+    if isinstance(all_entries, str):
+        return f"Error retrieving time entries: {all_entries}"
+        
+    entry_to_duplicate = None
+    for entry in all_entries:
+        if entry.get("id") == time_entry_id:
+            entry_to_duplicate = entry
+            break
+            
+    if entry_to_duplicate is None:
+        return f"Error: No time entry found with ID {time_entry_id}"
+    
+    # Calculate duration if both start and stop are provided
+    duration = entry_to_duplicate.get("duration")
+    if start and stop:
+        # Let the API calculate the duration
+        duration = None
+    
+    # Create the duplicate entry
+    workspace_id = entry_to_duplicate.get("workspace_id")
+    
+    result = await new_time_entry(
+        client=client,
+        workspace_id=workspace_id,
+        description=entry_to_duplicate.get("description"),
+        tags=entry_to_duplicate.get("tags"),
+        project_id=entry_to_duplicate.get("project_id"),
+        start=start or entry_to_duplicate.get("start"),
+        stop=stop or entry_to_duplicate.get("stop"),
+        duration=duration,
+        billable=entry_to_duplicate.get("billable", False)
+    )
+    
+    if isinstance(result, str):
+        return f"Error creating duplicate time entry: {result}"
+        
+    return {
+        "new_time_entry": result[0],
+        "duplicated_from": entry_to_duplicate,
+        "local_time": result[1]
+    }
+
+async def split_time_entry(
+    client: TogglApiClient,
+    time_entry_id: int,
+    split_time: str
+) -> Union[Dict[str, Any], str]:
+    """
+    Splits a time entry into two separate entries at the specified time.
+    
+    This function takes an existing time entry and splits it into two
+    separate entries at the specified split time, maintaining all other
+    attributes.
+    
+    Args:
+        client: The Toggl API client
+        time_entry_id: ID of the entry to split
+        split_time: UTC timestamp where the split should occur
+        
+    Returns:
+        Dict: Information about both resulting time entries
+        str: Error message if split fails
+    """
+    # Get all time entries and find the one with matching ID
+    all_entries = await client.get("/me/time_entries")
+    
+    if isinstance(all_entries, str):
+        return f"Error retrieving time entries: {all_entries}"
+        
+    entry_to_split = None
+    for entry in all_entries:
+        if entry.get("id") == time_entry_id:
+            entry_to_split = entry
+            break
+            
+    if entry_to_split is None:
+        return f"Error: No time entry found with ID {time_entry_id}"
+    
+    # Check if the entry is running (has negative duration)
+    if entry_to_split.get("duration", 0) < 0:
+        return f"Error: Cannot split a running time entry (ID {time_entry_id})"
+    
+    # Check if the split time is within the entry's time range
+    entry_start = entry_to_split.get("start")
+    entry_stop = entry_to_split.get("stop")
+    
+    if not entry_start or not entry_stop:
+        return "Error: Time entry is missing start or stop time"
+        
+    if split_time <= entry_start or split_time >= entry_stop:
+        return f"Error: Split time must be between the entry's start ({entry_start}) and stop ({entry_stop}) times"
+    
+    # Create two new entries with the split times
+    workspace_id = entry_to_split.get("workspace_id")
+    
+    # First part: from original start to split time
+    first_part = await new_time_entry(
+        client=client,
+        workspace_id=workspace_id,
+        description=entry_to_split.get("description"),
+        tags=entry_to_split.get("tags"),
+        project_id=entry_to_split.get("project_id"),
+        start=entry_start,
+        stop=split_time,
+        billable=entry_to_split.get("billable", False)
+    )
+    
+    if isinstance(first_part, str):
+        return f"Error creating first part of split: {first_part}"
+    
+    # Second part: from split time to original stop
+    second_part = await new_time_entry(
+        client=client,
+        workspace_id=workspace_id,
+        description=entry_to_split.get("description"),
+        tags=entry_to_split.get("tags"),
+        project_id=entry_to_split.get("project_id"),
+        start=split_time,
+        stop=entry_stop,
+        billable=entry_to_split.get("billable", False)
+    )
+    
+    if isinstance(second_part, str):
+        return f"Error creating second part of split: {second_part}"
+    
+    # Delete the original entry
+    delete_result = await delete_time_entry(
+        client=client,
+        time_entry_id=time_entry_id,
+        workspace_id=workspace_id
+    )
+    
+    if isinstance(delete_result, str) and not delete_result.startswith("Successfully deleted"):
+        return f"Warning: Split succeeded but failed to delete original entry: {delete_result}"
+    
+    return {
+        "first_part": first_part[0],
+        "second_part": second_part[0],
+        "original_entry": entry_to_split,
+        "local_time": first_part[1]
+    }
+
 async def bulk_create_time_entries(
     client: TogglApiClient,
     workspace_id: int,

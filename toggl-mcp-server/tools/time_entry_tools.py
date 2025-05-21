@@ -23,7 +23,10 @@ from helpers.time_entries import (
     advanced_search_time_entries as helper_advanced_search_time_entries,
     full_text_search as helper_full_text_search,
     get_work_context as helper_get_work_context,
-    continue_previous_work as helper_continue_previous_work
+    continue_previous_work as helper_continue_previous_work,
+    resume_time_entry as helper_resume_time_entry,
+    duplicate_time_entry as helper_duplicate_time_entry,
+    split_time_entry as helper_split_time_entry
 )
 from helpers.projects import get_project_id_by_name
 from helpers.workspaces import get_default_workspace_id, get_workspace_id_by_name
@@ -981,6 +984,163 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
         description = result["new_time_entry"].get("description", "Unknown activity")
         
         result["summary"] = f"Resumed tracking '{description}' with the same attributes as before."
+        result["timezone_info"] = tz_converter.get_timezone_info()
+        
+        return result
+        
+    @mcp.tool()
+    async def resume_time_entry(time_entry_id: int) -> Union[Dict[str, Any], str]:
+        """
+        Resume a previously stopped time entry.
+        
+        This tool creates a new running time entry with the same attributes
+        (description, project, tags, billable status) as a previous entry.
+        It's useful for quickly resuming work on the same task.
+        
+        Args:
+            time_entry_id: ID of the time entry to resume
+            
+        Returns:
+            Dict: Information about the new time entry
+            str: Error message if resumption fails
+        """
+        result = await helper_resume_time_entry(
+            client=api_client,
+            time_entry_id=time_entry_id
+        )
+        
+        if isinstance(result, str):  # Error message
+            return result
+            
+        # Add local time information to entries
+        if "new_time_entry" in result:
+            result["new_time_entry"] = tz_converter.enrich_time_entry_with_local_times(
+                result["new_time_entry"]
+            )
+            
+        if "resumed_from" in result:
+            result["resumed_from"] = tz_converter.enrich_time_entry_with_local_times(
+                result["resumed_from"]
+            )
+            
+        # Add summary and timezone info
+        description = result["new_time_entry"].get("description", "the task")
+        result["summary"] = f"Resumed tracking '{description}' at {result['local_time']}."
+        result["timezone_info"] = tz_converter.get_timezone_info()
+        
+        return result
+    
+    @mcp.tool()
+    async def duplicate_time_entry(
+        time_entry_id: int,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None
+    ) -> Union[Dict[str, Any], str]:
+        """
+        Create an exact duplicate of an existing time entry.
+        
+        This tool creates a new time entry with the same attributes as an
+        existing one, optionally with different start and end times.
+        
+        Args:
+            time_entry_id: ID of the time entry to duplicate
+            start_time: Optional custom start time in local timezone
+            end_time: Optional custom end time in local timezone
+            
+        Returns:
+            Dict: Information about the new duplicated entry
+            str: Error message if duplication fails
+        """
+        # Convert times from local to UTC if provided
+        utc_start = None
+        if start_time:
+            utc_start, _ = tz_converter.local_to_utc(start_time)
+            
+        utc_end = None
+        if end_time:
+            utc_end, _ = tz_converter.local_to_utc(end_time)
+            
+        # Call helper function
+        result = await helper_duplicate_time_entry(
+            client=api_client,
+            time_entry_id=time_entry_id,
+            start=utc_start,
+            stop=utc_end
+        )
+        
+        if isinstance(result, str):  # Error message
+            return result
+            
+        # Add local time information to entries
+        if "new_time_entry" in result:
+            result["new_time_entry"] = tz_converter.enrich_time_entry_with_local_times(
+                result["new_time_entry"]
+            )
+            
+        if "duplicated_from" in result:
+            result["duplicated_from"] = tz_converter.enrich_time_entry_with_local_times(
+                result["duplicated_from"]
+            )
+            
+        # Add summary
+        description = result["new_time_entry"].get("description", "time entry")
+        result["summary"] = f"Duplicated '{description}' time entry."
+        result["timezone_info"] = tz_converter.get_timezone_info()
+        
+        return result
+    
+    @mcp.tool()
+    async def split_time_entry(
+        time_entry_id: int,
+        split_time: str
+    ) -> Union[Dict[str, Any], str]:
+        """
+        Split a time entry into two separate entries at the specified time.
+        
+        This tool divides an existing time entry into two separate entries
+        at the specified split time, while maintaining all other attributes
+        like description, project, and tags.
+        
+        Args:
+            time_entry_id: ID of the time entry to split
+            split_time: Time to split at (ISO format in local timezone)
+            
+        Returns:
+            Dict: Information about the resulting split entries
+            str: Error message if split fails
+        """
+        # Convert split time from local to UTC
+        utc_split_time, _ = tz_converter.local_to_utc(split_time)
+        
+        # Call helper function
+        result = await helper_split_time_entry(
+            client=api_client,
+            time_entry_id=time_entry_id,
+            split_time=utc_split_time
+        )
+        
+        if isinstance(result, str):  # Error message
+            return result
+            
+        # Add local time information to entries
+        if "first_part" in result:
+            result["first_part"] = tz_converter.enrich_time_entry_with_local_times(
+                result["first_part"]
+            )
+            
+        if "second_part" in result:
+            result["second_part"] = tz_converter.enrich_time_entry_with_local_times(
+                result["second_part"]
+            )
+            
+        if "original_entry" in result:
+            result["original_entry"] = tz_converter.enrich_time_entry_with_local_times(
+                result["original_entry"]
+            )
+            
+        # Add summary
+        description = result["original_entry"].get("description", "time entry")
+        result["summary"] = f"Split '{description}' into two entries at {split_time}."
         result["timezone_info"] = tz_converter.get_timezone_info()
         
         return result
