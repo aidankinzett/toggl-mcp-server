@@ -5,7 +5,6 @@ This is the main entry point for the Toggl MCP server.
 It creates an MCP server that provides tools for interacting with Toggl Track.
 """
 
-import os
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
@@ -14,7 +13,6 @@ from api.client import TogglApiClient
 from tools.project_tools import register_project_tools
 from tools.time_entry_tools import register_time_entry_tools
 from tools.automation_tools import register_automation_tools
-from utils.timezone import tz_converter
 
 # Load environment variables
 load_dotenv()
@@ -26,57 +24,59 @@ When using Toggl MCP tools, ALL timestamps provided by you (the agent) should be
 </timezone_info>
 """
 
+
 def create_mcp_server():
     """
     Create and configure the MCP server with Toggl tools.
-    
+
     Returns:
         FastMCP: The configured MCP server
     """
     # Create MCP server
     mcp = FastMCP("toggl", system_instructions=system_instructions)
-    
+
     # Create API client
     api_client = TogglApiClient()
-    
-    # Register tools
+
+    # Register operation tools
     register_project_tools(mcp, api_client)
     register_time_entry_tools(mcp, api_client)
     register_automation_tools(mcp, api_client)
-    
-    # Register resources
+
+    # Register data resources
     @mcp.resource("toggl:://entities/{workspace_id}/projects")
     async def get_projects(workspace_id: int) -> dict:
         """Retrieve projects within the user's Toggl workspace."""
         url = f"/workspaces/{workspace_id}/projects"
         response = await api_client.get(url)
-        
+
         if isinstance(response, str):
             return {"error": response}
-            
+
         return {"projects": response}
 
     @mcp.resource("toggl:://me/time_entries")
     async def get_time_entries() -> dict:
         """Retrieve all time entries associated with the authenticated Toggl user."""
         response = await api_client.get("/me/time_entries")
-        
+
         if isinstance(response, str):
             return {"error": response}
-            
+
         return response
 
     @mcp.resource("toggl:://me/workspaces")
     async def get_workspaces() -> dict:
         """Retrieve all workspaces associated with the authenticated Toggl user."""
         response = await api_client.get("/me/workspaces")
-        
+
         if isinstance(response, str):
             return {"error": response}
-            
+
         return response
-    
+
     return mcp
+
 
 if __name__ == "__main__":
     mcp = create_mcp_server()
