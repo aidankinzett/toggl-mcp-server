@@ -55,22 +55,29 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
         Create a Toggl Track time entry with flexible options for live or past tracking.
 
         If `workspace_name` is not provided, set it as None.
-
-        Duration is in seconds. Set to -1 for live tracking for the current time entry.
+        
+        IMPORTANT: For specifying the time period, use ONE of these approaches:
+        1. Omit both start and stop times to start tracking now (running entry)
+        2. Provide start time only to start a running timer at that time
+        3. Provide start time and duration (in seconds) for a completed entry
+        4. Provide start time and stop time for a completed entry (duration calculated automatically)
+        
+        DO NOT provide both stop time and duration together, as this will cause conflicts.
         
         Use this tool to start a new entry (live tracking) or log a completed activity with precise timing.
 
         Examples:
-        - "Track 'Writing docs' starting now"
-        - "Log 2 hours spent on 'MCP Server' yesterday tagged ['Toggl', 'backend']"
+        - "Track 'Writing docs' starting now" (running entry)
+        - "Log time on 'MCP Server' from 10:30 to 12:45 today" (uses start+stop)
+        - "Log 2 hours spent on 'Testing' yesterday at 14:00" (uses start+duration)
 
         Args:
             description (str, optional): What the time entry is about.
             tags (List[str], optional): List of tags (names only).
             project_name (str, optional): Name of the associated project.
             start (str, optional): ISO 8601 start time in local timezone.
-            stop (str, optional): ISO 8601 stop time in local timezone.
-            duration (int, optional): Duration in seconds. Set to -1 for live tracking.
+            stop (str, optional): ISO 8601 stop time in local timezone. Don't use together with duration.
+            duration (int, optional): Duration in seconds. Don't use together with stop. Set to -1 for live tracking.
             billable (bool, optional): Whether this is billable time.
             workspace_name (str, optional): Name of the workspace. Defaults to user's default workspace if omitted.
 
@@ -96,6 +103,18 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
             else:
                 project_id = project_id_or_error
 
+        # Validate parameters
+        if stop is not None and duration is not None and duration != -1:
+            return {
+                "error": "Invalid parameter combination. Cannot use both 'stop' and 'duration' together.",
+                "suggestion": "Please use either start+stop OR start+duration, but not both.",
+                "examples": [
+                    "Example 1: Start now and run until stopped (running): set neither start, stop, nor duration",
+                    "Example 2: Log past work with known duration: set start and duration (seconds)",
+                    "Example 3: Log work with known start and end times: set start and stop (timestamps)"
+                ]
+            }
+        
         # Convert timestamps from local to UTC format
         debug_info = {"system_timezone": tz_converter.get_timezone_info()["timezone_name"]}
         
@@ -126,12 +145,12 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
             project_id=project_id,
             start=final_start_for_api,
             stop=final_stop_for_api,
-            duration=duration if start else -1,  # Pass original duration
+            duration=duration,  # Pass original duration
             billable=billable
         )
 
         # Handle response
-        if isinstance(toggl_time_entry, str) and toggl_time_entry.startswith("Error:"):
+        if isinstance(toggl_time_entry, str):  # Any error message
             return {"error": toggl_time_entry, "debug_info": debug_info}
         if not isinstance(toggl_time_entry, tuple) or len(toggl_time_entry) != 2:
             return {"error": f"Unexpected response format from helper_new_time_entry: {toggl_time_entry}", "debug_info": debug_info}
@@ -454,6 +473,14 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
                     
                 processed_entry["project_id"] = project_id
                 del processed_entry["project_name"]
+                
+            # Validate parameters
+            if "stop" in entry and entry["stop"] and "duration" in entry and entry["duration"] is not None and entry["duration"] != -1:
+                return {
+                    "error": "Invalid parameter combination in entry. Cannot use both 'stop' and 'duration' together.",
+                    "entry": entry,
+                    "suggestion": "Please use either start+stop OR start+duration for each entry, but not both."
+                }
                 
             # Convert timestamps from local to UTC
             if "start" in entry and entry["start"]:

@@ -53,16 +53,23 @@ async def new_time_entry(
 ) -> Union[Tuple[dict, str], str]:
     """
     Creates a new Toggl time entry with flexible support for running or completed tasks.
+    
+    IMPORTANT: When specifying time entry duration, use ONE of the following approaches:
+    1. Provide only the start time (start) for a running time entry (duration will be set to -1)
+    2. Provide start time (start) and duration in seconds (duration) for a completed entry
+    3. Provide start time (start) and stop time (stop) for a completed entry (duration will be calculated)
+    
+    Do not provide both stop time and duration, as this will cause conflicts.
 
     Args:
         client: The Toggl API client
-        workspace_id: The workspace ID
+        workspace_id: The workspace ID (required)
         description: Activity being tracked
         tags: List of tags to associate
         project_id: Associated project ID
         start: UTC start timestamp (RFC3339)
-        stop: UTC stop timestamp
-        duration: Duration in seconds (use -1 for running entry)
+        stop: UTC stop timestamp (don't use together with duration)
+        duration: Duration in seconds (don't use together with stop)
         billable: Whether the task is billable
 
     Returns:
@@ -71,6 +78,31 @@ async def new_time_entry(
     """
     if workspace_id is None:
         return "Error: workspace_id must be provided to new_time_entry."
+    
+    # Determine time entry mode and handle parameters correctly
+    final_duration = duration
+    
+    # Validation: Check for invalid parameter combinations and provide helpful errors
+    if stop is not None and duration is not None and duration != -1:
+        return "Error: Cannot provide both 'stop' time and 'duration'. Please use either:\n" + \
+               "1. start + stop (duration will be calculated automatically)\n" + \
+               "2. start + duration (without stop time)"
+    
+    # Case 1: Both stop and start provided - calculate duration automatically
+    if start and stop:
+        # Let Toggl API calculate the duration by setting it to null
+        final_duration = None
+    
+    # Case 2: Start without stop - check if it's running or completed
+    elif start and not stop:
+        if duration is None or duration == -1:
+            # Explicitly set duration to -1 for running entry
+            final_duration = -1
+        # Otherwise use the provided duration for a completed entry
+    
+    # Case 3: Neither start nor stop provided - start now as running entry
+    elif not start and not stop:
+        final_duration = -1
     
     endpoint = f"/workspaces/{workspace_id}/time_entries"
 
@@ -84,7 +116,7 @@ async def new_time_entry(
         "project_id": project_id,
         "start": start if start else current_iso_time,
         "stop": stop,
-        "duration": duration,
+        "duration": final_duration,
         "billable": billable,
         "workspace_id": workspace_id
     }
@@ -905,6 +937,25 @@ async def bulk_create_time_entries(
     current_local_time = tz_converter.utc_to_local(tz_converter.get_current_utc_time())
     
     for entry_data in entries:
+        # Validate parameter combination for each entry
+        stop = entry_data.get("stop")
+        duration = entry_data.get("duration", -1)
+        if stop is not None and duration is not None and duration != -1:
+            errors.append({
+                "data": entry_data, 
+                "error": "Cannot provide both 'stop' time and 'duration'. Use either start+stop or start+duration."
+            })
+            continue
+        
+        # Determine final duration based on provided parameters
+        final_duration = duration
+        if entry_data.get("start") and stop:
+            # Both start and stop provided - calculate duration automatically
+            final_duration = None
+        elif not entry_data.get("start") and not stop:
+            # Neither start nor stop provided - start now as running entry
+            final_duration = -1
+            
         # Prepare the entry data
         payload = {
             "created_with": "toggl_mcp_server",
@@ -912,8 +963,8 @@ async def bulk_create_time_entries(
             "tags": entry_data.get("tags"),
             "project_id": entry_data.get("project_id"),
             "start": entry_data.get("start"),
-            "stop": entry_data.get("stop"),
-            "duration": entry_data.get("duration", -1),
+            "stop": stop,
+            "duration": final_duration,
             "billable": entry_data.get("billable", False),
             "workspace_id": workspace_id
         }

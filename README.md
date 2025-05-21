@@ -63,17 +63,21 @@ The Toggl MCP Server provides a comprehensive set of tools for interacting with 
 
 - **new_time_entry**
 
-  - **Description**: Creates a new time entry. Can be used to start a timer (if only `start` is provided or neither `start` nor `duration` are provided) or log a completed time entry (if `start` and `stop`, or `start` and `duration` are provided).
+  - **Description**: Creates a new time entry. Can be used to start a timer or log a completed time entry.
   - **Input**:
     - `description` (str): The description for the time entry.
     - `workspace_name` (str, optional): Name of the workspace. Defaults to the user's default workspace.
     - `project_name` (str, optional): Name of the project to associate the time entry with.
     - `tags` (List[str], optional): A list of tag names to apply to the time entry.
     - `start` (str, optional): The start time of the entry in local timezone format (e.g., "2023-10-26T10:00:00"). Defaults to the current time if creating a running entry.
-    - `stop` (str, optional): The stop time of the entry in local timezone format. If provided, creates a completed entry.
-    - `duration` (int, optional): The duration of the entry in seconds. If `start` is provided but `stop` is not, `duration` determines the stop time. If `start` is not provided, a negative duration starts a running timer.
+    - `stop` (str, optional): The stop time of the entry in local timezone format. Don't use together with duration. If provided with start, creates a completed entry with calculated duration.
+    - `duration` (int, optional): The duration of the entry in seconds. Don't use together with stop. Set to -1 for running timer. If provided with start, creates a completed entry.
     - `billable` (bool, optional): Whether the time entry should be marked as billable. Defaults to False.
   - **Output**: JSON response containing the data of the created time entry.
+  - **Usage Notes**:
+    - For creating a running entry, either: 1) provide no start or stop times, or 2) provide only a start time
+    - For creating a completed entry, either: 1) provide start and stop times, or 2) provide start time and duration
+    - Do not provide both stop time and duration together, as this will cause conflicts
 
 - **stop_time_entry**
 
