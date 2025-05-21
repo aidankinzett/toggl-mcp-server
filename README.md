@@ -4,6 +4,16 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
 
 ## Features
 
+The Toggl MCP Server provides a comprehensive set of tools for interacting with Toggl Track through the Model Context Protocol. Key capabilities include:
+
+- **Project Management**: Create, update, delete, and query projects
+- **Time Entry Operations**: Start, stop, update, query, and manage time entries
+- **Bulk Operations**: Perform operations on multiple time entries at once
+- **Advanced Search**: Find time entries with powerful filtering and full-text search
+- **Context-Aware Tools**: Get rich information about your current work context
+- **Automation**: Save and apply timer presets and recurring entry configurations
+- **Convenience Functions**: Quickly resume, duplicate, or split time entries
+
 ### Tools
 
 #### Project Management
@@ -109,6 +119,138 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
     - `to_day_offset` (int): The end day offset from today (e.g., 0 for today, 1 for tomorrow). The range includes both the start and end dates.
     - `workspace_name` (str, optional): Name of the workspace to fetch entries from. Defaults to the user's default workspace.
   - **Output**: JSON response containing a list of time entries found within the specified date range.
+  
+#### Bulk Operations
+
+- **bulk_create_time_entries**
+  - **Description**: Creates multiple time entries in a single operation.
+  - **Input**:
+    - `entries` (List[Dict]): List of time entry objects, each containing description, project_name, tags, etc.
+    - `workspace_name` (str, optional): Name of the workspace. Defaults to user's default workspace.
+  - **Output**: JSON response containing the created time entries with success/error details.
+
+- **bulk_update_time_entries**
+  - **Description**: Updates multiple time entries in a single operation.
+  - **Input**:
+    - `entries` (List[Dict]): List of time entry update objects with either ID or description to identify entries.
+    - `workspace_name` (str, optional): Name of the workspace. Defaults to user's default workspace.
+  - **Output**: JSON response containing the updated time entries with success/error details.
+
+- **bulk_delete_time_entries**
+  - **Description**: Deletes multiple time entries in a single operation.
+  - **Input**:
+    - `entry_identifiers` (List[Union[int, str]]): List of time entry IDs or descriptions to delete.
+    - `are_descriptions` (bool): Whether identifiers are descriptions (True) or IDs (False).
+    - `workspace_name` (str, optional): Name of the workspace. Defaults to user's default workspace.
+  - **Output**: JSON response containing results of the deletion operation.
+
+#### Advanced Search
+
+- **search_time_entries**
+  - **Description**: Performs full-text search across time entries.
+  - **Input**:
+    - `query` (str): Text to search for in time entries.
+    - `fields` (List[str], optional): Fields to search in (defaults to "description").
+    - `case_sensitive` (bool, optional): Whether to perform case-sensitive search. Defaults to False.
+  - **Output**: JSON response containing matching time entries and search metadata.
+
+- **advanced_search_time_entries**
+  - **Description**: Performs comprehensive multi-criteria filtering of time entries.
+  - **Input**:
+    - `search_text` (str, optional): Text to search in descriptions.
+    - `project_names` (List[str], optional): List of project names to filter by.
+    - `start_date` (str, optional): Start of date range in local timezone.
+    - `end_date` (str, optional): End of date range in local timezone.
+    - `tags` (List[str], optional): List of tags to filter by.
+    - `min_duration_minutes` (float, optional): Minimum duration in minutes.
+    - `max_duration_minutes` (float, optional): Maximum duration in minutes.
+    - `billable` (bool, optional): Filter by billable status.
+    - `case_sensitive` (bool, optional): Whether text search is case-sensitive. Defaults to False.
+    - `exact_match` (bool, optional): Whether text must match exactly. Defaults to False.
+    - `workspace_name` (str, optional): Workspace name to search in.
+  - **Output**: JSON response containing matching time entries and search criteria details.
+
+#### Context-Aware Tools
+
+- **what_am_i_working_on**
+  - **Description**: Provides comprehensive information about current and recent work activities.
+  - **Input**: None.
+  - **Output**: JSON response containing current time entry details, recent work summary, most used projects and tags, and natural language summary.
+
+- **continue_previous_work**
+  - **Description**: Continues a previous time entry by starting a new one with the same attributes.
+  - **Input**:
+    - `description` (str, optional): Description of the entry to continue.
+    - `time_entry_id` (int, optional): ID of the entry to continue.
+    - `workspace_name` (str, optional): Name of the workspace containing the entry.
+  - **Output**: JSON response containing the new time entry and reference to the continued entry.
+
+#### Automation Features
+
+- **save_timer_preset**
+  - **Description**: Saves a time entry configuration as a preset for future use.
+  - **Input**:
+    - `name` (str): Name for the preset.
+    - `description` (str, optional): Description for entries created with this preset.
+    - `project_name` (str, optional): Project name for the preset.
+    - `workspace_name` (str, optional): Workspace name for the preset.
+    - `tags` (List[str], optional): List of tags to apply.
+    - `billable` (bool, optional): Whether entries are billable.
+  - **Output**: JSON response containing the saved preset data.
+
+- **start_timer_with_preset**
+  - **Description**: Starts a new time entry using a saved preset configuration.
+  - **Input**:
+    - `preset_name` (str): Name of the preset to use.
+  - **Output**: JSON response containing the new time entry data.
+
+- **list_timer_presets**
+  - **Description**: Gets all saved timer presets.
+  - **Input**: None.
+  - **Output**: JSON response containing all timer presets.
+
+- **create_recurring_entry**
+  - **Description**: Creates a recurring time entry configuration.
+  - **Input**:
+    - `description` (str): Description for recurring time entries.
+    - `schedule` (Dict): Dictionary defining recurrence pattern.
+    - `project_name` (str, optional): Project to associate with the entries.
+    - `workspace_name` (str, optional): Workspace name.
+    - `tags` (List[str], optional): List of tags to apply.
+    - `billable` (bool, optional): Whether entries are billable.
+    - `duration_minutes` (int, optional): Default duration in minutes.
+  - **Output**: JSON response containing the created recurring entry configuration.
+
+- **run_recurring_entry**
+  - **Description**: Manually runs a recurring entry configuration to create a time entry.
+  - **Input**:
+    - `entry_id` (str): ID of the recurring entry to run.
+    - `start_time` (str, optional): Custom start time.
+    - `end_time` (str, optional): Custom end time.
+  - **Output**: JSON response containing the created time entry data.
+
+#### Convenience Functions
+
+- **resume_time_entry**
+  - **Description**: Resumes a previously stopped time entry by creating a new one with the same attributes.
+  - **Input**:
+    - `time_entry_id` (int): ID of the time entry to resume.
+  - **Output**: JSON response containing the new time entry data.
+
+- **duplicate_time_entry**
+  - **Description**: Creates an exact duplicate of an existing time entry.
+  - **Input**:
+    - `time_entry_id` (int): ID of the time entry to duplicate.
+    - `start_time` (str, optional): Custom start time for the duplicate.
+    - `end_time` (str, optional): Custom end time for the duplicate.
+  - **Output**: JSON response containing the duplicated time entry data.
+
+- **split_time_entry**
+  - **Description**: Splits a time entry into two separate entries at the specified time.
+  - **Input**:
+    - `time_entry_id` (int): ID of the time entry to split.
+    - `split_time` (str): Time to split at (ISO format in local timezone).
+  - **Output**: JSON response containing information about both resulting time entries.
 
 ## Project Structure
 
@@ -121,13 +263,16 @@ The Toggl MCP Server is organized into the following modules:
   - `projects.py`: Functions for managing Toggl projects
   - `time_entries.py`: Functions for managing Toggl time entries
   - `workspaces.py`: Functions for managing Toggl workspaces
+  - `automation.py`: Functions for presets and recurring entries
 
 - **tools/**: Houses MCP tool definitions
   - `project_tools.py`: MCP tools for project management
   - `time_entry_tools.py`: MCP tools for time entry management
+  - `automation_tools.py`: MCP tools for automation features
 
 - **utils/**: Utility modules
   - `timezone.py`: Timezone conversion and formatting utilities
+  - `storage.py`: Persistent storage for presets and configurations
 
 - **toggl_mcp_server.py**: Main entry point that registers tools and resources
 
