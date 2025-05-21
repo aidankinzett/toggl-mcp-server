@@ -59,11 +59,10 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
     - `workspace_name` (str, optional): Name of the workspace. Defaults to the user's default workspace.
     - `project_name` (str, optional): Name of the project to associate the time entry with.
     - `tags` (List[str], optional): A list of tag names to apply to the time entry.
-    - `start` (str, optional): The start time of the entry in ISO 8601 format (e.g., "2023-10-26T10:00:00Z"). Defaults to the current time if creating a running entry.
-    - `stop` (str, optional): The stop time of the entry in ISO 8601 format. If provided, creates a completed entry.
+    - `start` (str, optional): The start time of the entry in local timezone format (e.g., "2023-10-26T10:00:00"). Defaults to the current time if creating a running entry.
+    - `stop` (str, optional): The stop time of the entry in local timezone format. If provided, creates a completed entry.
     - `duration` (int, optional): The duration of the entry in seconds. If `start` is provided but `stop` is not, `duration` determines the stop time. If `start` is not provided, a negative duration starts a running timer.
     - `billable` (bool, optional): Whether the time entry should be marked as billable. Defaults to False.
-    - `created_with` (str, optional): The name of the application creating the entry. Defaults to "MCP".
   - **Output**: JSON response containing the data of the created time entry.
 
 - **stop_time_entry**
@@ -98,8 +97,8 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
     - `new_description` (str, optional): New description for the time entry.
     - `project_name` (str, optional): New project name to associate with the entry. Set to empty string "" to remove project association.
     - `tags` (List[str], optional): A new list of tag names. This will replace all existing tags. Provide an empty list `[]` to remove all tags.
-    - `new_start` (str, optional): New start time in ISO 8601 format.
-    - `new_stop` (str, optional): New stop time in ISO 8601 format.
+    - `new_start` (str, optional): New start time in local timezone format.
+    - `new_stop` (str, optional): New stop time in local timezone format.
     - `billable` (bool, optional): New billable status.
   - **Output**: JSON response containing the data of the updated time entry.
 
@@ -111,6 +110,46 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
     - `workspace_name` (str, optional): Name of the workspace to fetch entries from. Defaults to the user's default workspace.
   - **Output**: JSON response containing a list of time entries found within the specified date range.
 
+## Project Structure
+
+The Toggl MCP Server is organized into the following modules:
+
+- **api/**: Contains the API client for Toggl
+  - `client.py`: Main API client class with HTTP methods
+
+- **helpers/**: Contains helper functions for different Toggl entities
+  - `projects.py`: Functions for managing Toggl projects
+  - `time_entries.py`: Functions for managing Toggl time entries
+  - `workspaces.py`: Functions for managing Toggl workspaces
+
+- **tools/**: Houses MCP tool definitions
+  - `project_tools.py`: MCP tools for project management
+  - `time_entry_tools.py`: MCP tools for time entry management
+
+- **utils/**: Utility modules
+  - `timezone.py`: Timezone conversion and formatting utilities
+
+- **toggl_mcp_server.py**: Main entry point that registers tools and resources
+
+### Timezone Handling
+
+The server includes a robust timezone handling system that:
+
+1. **Provides Consistent Formats**: Uses standardized formats for timestamps:
+   - UTC API Format: `YYYY-MM-DDThh:mm:ss.000Z` (for Toggl API)
+   - Local Display Format: `YYYY-MM-DD hh:mm:ss TZ` (for user display)
+
+2. **Automatically Converts Between Timezones**:
+   - User timestamps are assumed to be in the local system timezone
+   - Timestamps are automatically converted to UTC for API requests
+   - API responses include both UTC and local timezone formatted timestamps
+
+3. **Handles Various Input Formats**: Parses and normalizes user-provided timestamps
+
+4. **Enriches API Responses**: Adds local time information to all timestamp fields in API responses
+
+All timezone handling is centralized in the `TimezoneConverter` class to ensure consistency across the application.
+
 ## Getting Started
 
 ### Prerequisites
@@ -121,7 +160,7 @@ Allows MCP clients to interact with Toggl Track, enabling time tracking, project
 
 ### Environment Variables
 
-Create a `.env` file inside of the `mcp_toggl_server` folder with either:
+Create a `.env` file inside of the `toggl-mcp-server` folder with either:
 
 ```bash
 EMAIL=your_toggl_email
@@ -136,13 +175,15 @@ TOGGL_API_TOKEN=***
 
 ### Installation
 
-First install uv: - For MacOS/Linux:
-`bash
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        ` - For Windows:
-`bash
-        powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-        `
+First install uv:
+For MacOS/Linux:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+For Windows:
+```bash
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
 
 Make sure to restart your terminal afterwards to ensure that the uv command gets picked up.
 
@@ -152,7 +193,7 @@ Now let's clone the repository and set up the project:
 git clone [repository-url]
 cd toggl-mcp-server/toggl-mcp-server
 uv venv
-source .venv/bin/activate
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 uv sync
 ```
 
