@@ -11,6 +11,7 @@ from api.client import TogglApiClient
 from utils.timezone import tz_converter
 from helpers.time_entries import (
     get_time_entry_id_by_name,
+    get_all_time_entry_ids_by_name,
     new_time_entry as helper_new_time_entry,
     stop_time_entry as helper_stop_time_entry,
     delete_time_entry as helper_delete_time_entry,
@@ -655,7 +656,14 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
         If `workspace_name` is not provided, set it as None.
         
         This allows you to remove multiple entries at once, either by their IDs
-        or by their descriptions.
+        or by their descriptions. When using descriptions, all time entries with 
+        matching descriptions will be deleted - this means a single description 
+        may result in multiple deletions if multiple entries have the same description.
+        
+        Use Cases:
+        - Batch delete entries by IDs from search results
+        - Remove all entries with specific descriptions
+        - Clean up entries with duplicate descriptions
         
         Args:
             entry_identifiers: List of time entry IDs or descriptions
@@ -663,7 +671,11 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
             workspace_name: Name of workspace (defaults to user's default)
             
         Returns:
-            Dict: Results of the deletion operation
+            Dict: Results of the deletion operation, including:
+                - success: List of successfully deleted entries with their IDs
+                - errors: List of failed deletions with error messages
+                - success_count: Number of successfully deleted entries
+                - error_count: Number of failed deletions
         """
         # Get workspace ID
         if workspace_name is None:
@@ -678,16 +690,18 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
         entry_ids = []
         if are_descriptions:
             for description in entry_identifiers:
-                entry_id = await get_time_entry_id_by_name(
+                # Use the new function to get ALL matching IDs for each description
+                matching_ids = await get_all_time_entry_ids_by_name(
                     api_client,
                     description,
                     workspace_id
                 )
                 
-                if isinstance(entry_id, str):  # Error
-                    return {"error": f"Error identifying entry '{description}': {entry_id}"}
-                    
-                entry_ids.append(entry_id)
+                if isinstance(matching_ids, str):  # Error
+                    return {"error": f"Error identifying entries with description '{description}': {matching_ids}"}
+                
+                # Add all matching IDs to our list
+                entry_ids.extend(matching_ids)
         else:
             # Assume the identifiers are already IDs
             entry_ids = [int(id) for id in entry_identifiers]

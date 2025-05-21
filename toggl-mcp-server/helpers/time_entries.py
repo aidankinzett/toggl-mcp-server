@@ -19,6 +19,9 @@ async def get_time_entry_id_by_name(
 ) -> Union[int, str]:
     """
     Retrieve the ID of a time entry based on an exact match of its description.
+    
+    Note: This function returns only the FIRST matching entry ID.
+    For multiple matches, use get_all_time_entry_ids_by_name instead.
 
     Args:
         client: The Toggl API client
@@ -26,7 +29,7 @@ async def get_time_entry_id_by_name(
         workspace_id: The Toggl workspace to search in
 
     Returns:
-        int: The ID of the matching time entry, if found
+        int: The ID of the first matching time entry, if found
         str: An error message if the entry is not found or if the fetch fails
     """
     time_entries_response = await client.get("/me/time_entries")
@@ -39,6 +42,43 @@ async def get_time_entry_id_by_name(
             return time_entry.get("id")
         
     return f"Time entry with name '{time_entry_name}' doesn't exist"
+
+async def get_all_time_entry_ids_by_name(
+    client: TogglApiClient,
+    time_entry_name: str, 
+    workspace_id: int
+) -> Union[List[int], str]:
+    """
+    Retrieve ALL IDs of time entries based on an exact match of their description.
+    
+    This function returns a list of ALL time entry IDs that match the given description,
+    as multiple entries can have the same description.
+
+    Args:
+        client: The Toggl API client
+        time_entry_name: The exact description of the time entries to find
+        workspace_id: The Toggl workspace to search in
+
+    Returns:
+        List[int]: All IDs of matching time entries
+        str: An error message if no entries are found or if the fetch fails
+    """
+    time_entries_response = await client.get("/me/time_entries")
+
+    if isinstance(time_entries_response, str):  # Error message
+        return f"Error fetching time entries: {time_entries_response}"
+    
+    matching_ids = []
+    for time_entry in time_entries_response:
+        if time_entry.get("description") == time_entry_name:
+            entry_id = time_entry.get("id")
+            if entry_id is not None:
+                matching_ids.append(entry_id)
+    
+    if not matching_ids:
+        return f"No time entries found with name '{time_entry_name}'"
+        
+    return matching_ids
 
 async def new_time_entry(
     client: TogglApiClient,
