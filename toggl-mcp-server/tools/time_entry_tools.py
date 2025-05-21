@@ -21,7 +21,9 @@ from helpers.time_entries import (
     bulk_update_time_entries as helper_bulk_update_time_entries,
     bulk_delete_time_entries as helper_bulk_delete_time_entries,
     advanced_search_time_entries as helper_advanced_search_time_entries,
-    full_text_search as helper_full_text_search
+    full_text_search as helper_full_text_search,
+    get_work_context as helper_get_work_context,
+    continue_previous_work as helper_continue_previous_work
 )
 from helpers.projects import get_project_id_by_name
 from helpers.workspaces import get_default_workspace_id, get_workspace_id_by_name
@@ -853,3 +855,132 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
             "count": len(enriched_entries),
             "search_criteria": search_criteria
         }
+        
+    @mcp.tool()
+    async def what_am_i_working_on() -> Dict[str, Any]:
+        """
+        Provides detailed information about your current and recent work activities.
+        
+        This tool answers the question "What am I working on?" by delivering a rich
+        context about your current time entry (if any is running), as well as insights
+        into your recent work patterns, most used projects, and common tags.
+        
+        The response includes:
+        - Current time entry details (if one is running)
+        - Recent work summary (last 7 days)
+        - Most used projects and their total durations
+        - Most frequently used tags
+        - Total hours tracked recently
+        
+        Returns:
+            Dict: Comprehensive work context information
+        """
+        context_data = await helper_get_work_context(api_client)
+        
+        if isinstance(context_data, str):  # Error message
+            return {"error": context_data}
+            
+        # Add some natural language descriptions for a more human-friendly response
+        result = context_data.copy()
+        
+        # Generate a natural language summary based on the context
+        is_tracking = (context_data["current_activity"] is not None)
+        has_recent_entries = (context_data["recent_work_summary"]["total_entries"] > 0)
+        
+        summary = []
+        
+        if is_tracking:
+            current = context_data["current_activity"]
+            description = current["description"]
+            
+            # Get project name if available
+            project_name = "no project"
+            if context_data["current_time_entry"].get("project_id"):
+                for project in context_data["recent_work_summary"].get("most_used_projects", []):
+                    if project.get("project_id") == context_data["current_time_entry"].get("project_id"):
+                        project_name = project.get("name", "unnamed project")
+                        break
+                        
+            start_time = current.get("started_at_local", "unknown time")
+            
+            summary.append(f"You are currently tracking '{description}' on {project_name} since {start_time}.")
+        else:
+            summary.append("You are not currently tracking any time.")
+            
+        if has_recent_entries:
+            hours = context_data["recent_work_summary"]["total_hours_tracked"]
+            entries = context_data["recent_work_summary"]["total_entries"]
+            
+            summary.append(f"In the last 7 days, you've tracked {hours} hours across {entries} time entries.")
+            
+            if context_data["recent_work_summary"].get("most_used_projects"):
+                top_project = context_data["recent_work_summary"]["most_used_projects"][0]
+                top_project_hours = round(top_project["duration"] / 3600, 1)
+                
+                summary.append(f"Your most active project is '{top_project['name']}' with {top_project_hours} hours.")
+                
+        result["natural_language_summary"] = summary
+        
+        return result
+        
+    @mcp.tool()
+    async def continue_previous_work(
+        description: Optional[str] = None,
+        time_entry_id: Optional[int] = None,
+        workspace_name: Optional[str] = None
+    ) -> Union[Dict[str, Any], str]:
+        """
+        Continue a previous time entry by starting a new one with the same attributes.
+        
+        This tool lets you quickly resume work on a previous activity by creating a new
+        time entry with the same description, project, tags, and billable status.
+        
+        If `workspace_name` is not provided, set it as None.
+        
+        You can identify the previous entry either by its description or by its ID.
+        
+        Args:
+            description: Description of the time entry to continue (optional)
+            time_entry_id: ID of the time entry to continue (optional)
+            workspace_name: Name of the workspace (required if using description)
+            
+        Returns:
+            Dict: Information about the newly created time entry
+            str: Error message if continuation fails
+        """
+        # Get workspace ID if needed
+        workspace_id = None
+        if description is not None and workspace_name is not None:
+            workspace_id = await get_workspace_id_by_name(api_client, workspace_name)
+            if isinstance(workspace_id, str):  # Error message
+                return workspace_id
+                
+        # Call helper function to continue the previous work
+        result = await helper_continue_previous_work(
+            client=api_client,
+            time_entry_id=time_entry_id,
+            description=description,
+            workspace_id=workspace_id
+        )
+        
+        if isinstance(result, str):  # Error message
+            return result
+            
+        # Enrich the response with local time information
+        if "new_time_entry" in result:
+            result["new_time_entry"] = tz_converter.enrich_time_entry_with_local_times(
+                result["new_time_entry"]
+            )
+            
+        if "continued_from" in result:
+            result["continued_from"] = tz_converter.enrich_time_entry_with_local_times(
+                result["continued_from"]
+            )
+            
+        # Add a natural language summary
+        description = result["new_time_entry"].get("description", "Unknown activity")
+        
+        result["summary"] = f"Resumed tracking '{description}' with the same attributes as before."
+        result["timezone_info"] = tz_converter.get_timezone_info()
+        
+        return result

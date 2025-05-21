@@ -7,6 +7,8 @@ bulk operations for multiple time entries.
 """
 
 from typing import List, Union, Dict, Any, Optional, Tuple
+import datetime
+from datetime import timezone, timedelta
 from api.client import TogglApiClient
 from utils.timezone import tz_converter
 
@@ -409,6 +411,241 @@ async def full_text_search(
     
     # Filter entries
     return [entry for entry in all_entries if _matches_query(entry)]
+    
+async def get_work_context(client: TogglApiClient) -> Union[Dict[str, Any], str]:
+    """
+    Retrieves comprehensive context about the user's current and recent work.
+    
+    This function gathers information to answer questions like "What am I working on?",
+    providing context about the current time entry (if any), recent entries, and
+    frequently used projects and tags.
+    
+    Args:
+        client: The Toggl API client
+        
+    Returns:
+        Dict: A dictionary containing work context information
+        str: Error message if retrieval fails
+    """
+    # Get the current time entry
+    current_entry = await get_current_time_entry(client)
+    
+    if isinstance(current_entry, str) and not current_entry.startswith("No active time entry"):
+        return f"Error retrieving current time entry: {current_entry}"
+        
+    # Get recent time entries
+    # Calculate time range for recent entries (last 7 days)
+    now = datetime.datetime.now(timezone.utc)
+    week_ago = now - datetime.timedelta(days=7)
+    now_str = tz_converter.format_for_api(now)
+    week_ago_str = tz_converter.format_for_api(week_ago)
+    
+    recent_entries = await get_time_entries_in_range(
+        client=client,
+        start_time=week_ago_str,
+        end_time=now_str
+    )
+    
+    if isinstance(recent_entries, str):
+        return f"Error retrieving recent time entries: {recent_entries}"
+        
+    # Calculate stats
+    total_tracked_duration = 0
+    project_durations = {}
+    project_counts = {}
+    tag_counts = {}
+    entry_descriptions = set()
+    
+    for entry in recent_entries:
+        # Skip running entries for duration calculations
+        duration = entry.get("duration", 0)
+        if duration and duration > 0:
+            total_tracked_duration += duration
+            
+            # Project stats
+            project_id = entry.get("project_id")
+            if project_id:
+                project_durations[project_id] = project_durations.get(project_id, 0) + duration
+                project_counts[project_id] = project_counts.get(project_id, 0) + 1
+                
+        # Tag stats
+        tags = entry.get("tags", [])
+        for tag in tags:
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+            
+        # Add description
+        description = entry.get("description")
+        if description:
+            entry_descriptions.add(description)
+    
+    # Get project details 
+    # We'll need the workspace ID - assume all entries are in the same workspace
+    # If there are no recent entries, we'll need to get the default workspace
+    workspace_id = None
+    if recent_entries and len(recent_entries) > 0:
+        first_entry = recent_entries[0]
+        workspace_id = first_entry.get("workspace_id")
+    
+    # Process projects info
+    projects_info = {}
+    
+    if workspace_id:
+        # Get all projects in the workspace
+        projects_response = await client.get(f"/workspaces/{workspace_id}/projects")
+        
+        if not isinstance(projects_response, str):
+            # Create lookup by ID
+            for project in projects_response:
+                project_id = project.get("id")
+                if project_id in project_durations:
+                    projects_info[project_id] = {
+                        "name": project.get("name"),
+                        "color": project.get("color"),
+                        "duration": project_durations.get(project_id, 0),
+                        "count": project_counts.get(project_id, 0)
+                    }
+    
+    # Sort data for most common
+    most_used_projects = sorted(
+        projects_info.values(), 
+        key=lambda x: x["duration"], 
+        reverse=True
+    )[:5]
+    
+    most_used_tags = sorted(
+        [{"tag": tag, "count": count} for tag, count in tag_counts.items()],
+        key=lambda x: x["count"],
+        reverse=True
+    )[:5]
+    
+    # Calculate totals
+    total_hours = total_tracked_duration / 3600  # Convert seconds to hours
+    recent_entries_count = len(recent_entries)
+    
+    # Build complete context
+    context = {
+        "current_time_entry": current_entry if not isinstance(current_entry, str) else None,
+        "current_activity": None if isinstance(current_entry, str) else {
+            "description": current_entry.get("description", "No description"),
+            "project": None,
+            "started_at": current_entry.get("start"),
+            "started_at_local": tz_converter.utc_to_local(current_entry.get("start")),
+            "duration_so_far": abs(current_entry.get("duration", 0)) if current_entry.get("duration", 0) < 0 else None
+        },
+        "recent_work_summary": {
+            "period": "Last 7 days",
+            "total_entries": recent_entries_count,
+            "total_hours_tracked": round(total_hours, 2),
+            "most_used_projects": most_used_projects,
+            "most_used_tags": most_used_tags,
+            "distinct_activities": len(entry_descriptions)
+        },
+        "timezone_info": tz_converter.get_timezone_info(),
+    }
+    
+    return context
+
+async def continue_previous_work(
+    client: TogglApiClient,
+    time_entry_id: Optional[int] = None,
+    description: Optional[str] = None,
+    workspace_id: Optional[int] = None
+) -> Union[Dict[str, Any], str]:
+    """
+    Starts a new time entry based on a previous one.
+    
+    This function allows users to "continue" work they were doing previously
+    by creating a new time entry with the same attributes as an existing one.
+    The previous entry can be identified by its ID or by its description.
+    
+    Args:
+        client: The Toggl API client
+        time_entry_id: ID of the entry to continue (optional)
+        description: Description of the entry to continue (optional)
+        workspace_id: Workspace ID (required if using description)
+        
+    Returns:
+        Dict: The new time entry that was created
+        str: Error message if continuation fails
+    """
+    # Input validation
+    if time_entry_id is None and description is None:
+        return "Error: Either time_entry_id or description must be provided"
+        
+    if description is not None and workspace_id is None:
+        return "Error: workspace_id is required when using description to identify the entry"
+        
+    # Get the entry to continue
+    entry_to_continue = None
+    
+    if time_entry_id is not None:
+        # Get all time entries and find the one with matching ID
+        all_entries = await client.get("/me/time_entries")
+        
+        if isinstance(all_entries, str):
+            return f"Error retrieving time entries: {all_entries}"
+            
+        for entry in all_entries:
+            if entry.get("id") == time_entry_id:
+                entry_to_continue = entry
+                break
+                
+        if entry_to_continue is None:
+            return f"Error: No time entry found with ID {time_entry_id}"
+            
+    else:  # Using description
+        # Find entry by description
+        entry_id = await get_time_entry_id_by_name(
+            client=client,
+            time_entry_name=description,
+            workspace_id=workspace_id
+        )
+        
+        if isinstance(entry_id, str):  # Error message
+            return entry_id
+            
+        # Get all time entries and find the one with matching ID
+        all_entries = await client.get("/me/time_entries")
+        
+        if isinstance(all_entries, str):
+            return f"Error retrieving time entries: {all_entries}"
+            
+        for entry in all_entries:
+            if entry.get("id") == entry_id:
+                entry_to_continue = entry
+                break
+    
+    # Extract relevant fields from the previous entry
+    if entry_to_continue:
+        workspace_id = entry_to_continue.get("workspace_id")
+        
+        new_entry_data = {
+            "description": entry_to_continue.get("description"),
+            "tags": entry_to_continue.get("tags"),
+            "project_id": entry_to_continue.get("project_id"),
+            "billable": entry_to_continue.get("billable", False),
+        }
+        
+        # Start a new entry with the same attributes
+        result = await new_time_entry(
+            client=client,
+            workspace_id=workspace_id,
+            description=new_entry_data["description"],
+            tags=new_entry_data["tags"],
+            project_id=new_entry_data["project_id"],
+            billable=new_entry_data["billable"]
+        )
+        
+        if isinstance(result, str):
+            return f"Error creating new time entry: {result}"
+            
+        return {
+            "new_time_entry": result[0],
+            "continued_from": entry_to_continue,
+            "local_time": result[1]
+        }
+        
+    return "Error: Could not find the time entry to continue"
 
 async def bulk_create_time_entries(
     client: TogglApiClient,
