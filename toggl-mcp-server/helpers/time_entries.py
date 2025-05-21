@@ -224,6 +224,192 @@ async def get_time_entries_in_range(
 
     return [entry for entry in all_entries if _in_range(entry)]
 
+async def advanced_search_time_entries(
+    client: TogglApiClient,
+    search_text: Optional[str] = None,
+    project_ids: Optional[List[int]] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    min_duration: Optional[int] = None,
+    max_duration: Optional[int] = None,
+    billable: Optional[bool] = None,
+    case_sensitive: bool = False,
+    exact_match: bool = False,
+    workspace_id: Optional[int] = None
+) -> Union[List[dict], str]:
+    """
+    Performs advanced search of time entries with multiple filter criteria.
+    
+    Args:
+        client: The Toggl API client
+        search_text: Text to search for in time entry descriptions
+        project_ids: List of project IDs to filter by
+        start_date: Earliest UTC date to include (ISO format)
+        end_date: Latest UTC date to include (ISO format)
+        tags: List of tags to filter by (entries must have at least one)
+        min_duration: Minimum duration in seconds
+        max_duration: Maximum duration in seconds
+        billable: Filter by billable status
+        case_sensitive: Whether text search should be case-sensitive
+        exact_match: Whether text should match exactly or as substring
+        workspace_id: Optional workspace ID to filter by
+        
+    Returns:
+        List[dict]: List of matching time entries
+        str: Error message if search fails
+    """
+    # Get all time entries
+    all_entries = await client.get("/me/time_entries")
+    
+    if isinstance(all_entries, str):  # Error message
+        return f"Failed to retrieve entries: {all_entries}"
+    
+    # Define filter functions for each criteria
+    def _matches_text(entry: dict) -> bool:
+        if search_text is None:
+            return True
+        
+        description = entry.get("description", "")
+        if not description:
+            return False
+            
+        if not case_sensitive:
+            return search_text.lower() in description.lower() if not exact_match else search_text.lower() == description.lower()
+        else:
+            return search_text in description if not exact_match else search_text == description
+    
+    def _matches_project(entry: dict) -> bool:
+        if project_ids is None:
+            return True
+        
+        entry_project_id = entry.get("project_id")
+        if entry_project_id is None:
+            return False
+            
+        return entry_project_id in project_ids
+    
+    def _in_date_range(entry: dict) -> bool:
+        entry_start = entry.get("start")
+        if not entry_start:
+            return False
+            
+        in_range = True
+        if start_date:
+            in_range = in_range and entry_start >= start_date
+        if end_date:
+            in_range = in_range and entry_start <= end_date
+            
+        return in_range
+    
+    def _has_tag(entry: dict) -> bool:
+        if tags is None:
+            return True
+            
+        entry_tags = entry.get("tags", [])
+        if not entry_tags:
+            return False
+            
+        # Check if any of the requested tags are in the entry's tags
+        return any(tag in entry_tags for tag in tags)
+    
+    def _duration_in_range(entry: dict) -> bool:
+        duration = entry.get("duration")
+        if duration is None:
+            return False
+            
+        # Handle running time entries (negative duration)
+        if duration < 0:
+            return True
+            
+        in_range = True
+        if min_duration is not None:
+            in_range = in_range and duration >= min_duration
+        if max_duration is not None:
+            in_range = in_range and duration <= max_duration
+            
+        return in_range
+    
+    def _matches_billable(entry: dict) -> bool:
+        if billable is None:
+            return True
+            
+        entry_billable = entry.get("billable", False)
+        return entry_billable == billable
+    
+    def _matches_workspace(entry: dict) -> bool:
+        if workspace_id is None:
+            return True
+            
+        entry_workspace_id = entry.get("workspace_id")
+        return entry_workspace_id == workspace_id
+    
+    # Apply all filters
+    filtered_entries = []
+    for entry in all_entries:
+        if (
+            _matches_text(entry) and
+            _matches_project(entry) and
+            _in_date_range(entry) and
+            _has_tag(entry) and
+            _duration_in_range(entry) and
+            _matches_billable(entry) and
+            _matches_workspace(entry)
+        ):
+            filtered_entries.append(entry)
+    
+    return filtered_entries
+
+async def full_text_search(
+    client: TogglApiClient,
+    query: str,
+    search_fields: Optional[List[str]] = None,
+    case_sensitive: bool = False
+) -> Union[List[dict], str]:
+    """
+    Performs full-text search across time entries with customizable field searching.
+    
+    Args:
+        client: The Toggl API client
+        query: The search text
+        search_fields: Fields to search (defaults to ["description"])
+        case_sensitive: Whether to use case-sensitive matching
+        
+    Returns:
+        List[dict]: List of matching time entries
+        str: Error message if search fails
+    """
+    # Default to searching only description if not specified
+    if search_fields is None:
+        search_fields = ["description"] 
+    
+    # Get all time entries
+    all_entries = await client.get("/me/time_entries")
+    
+    if isinstance(all_entries, str):  # Error message
+        return f"Failed to retrieve entries: {all_entries}"
+    
+    # Define search function
+    def _matches_query(entry: dict) -> bool:
+        for field in search_fields:
+            value = entry.get(field)
+            
+            # Skip fields that don't exist or aren't strings
+            if value is None or not isinstance(value, str):
+                continue
+                
+            if not case_sensitive:
+                if query.lower() in value.lower():
+                    return True
+            else:
+                if query in value:
+                    return True
+                    
+        return False
+    
+    # Filter entries
+    return [entry for entry in all_entries if _matches_query(entry)]
+
 async def bulk_create_time_entries(
     client: TogglApiClient,
     workspace_id: int,

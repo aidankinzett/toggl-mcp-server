@@ -19,7 +19,9 @@ from helpers.time_entries import (
     get_time_entries_in_range,
     bulk_create_time_entries as helper_bulk_create_time_entries,
     bulk_update_time_entries as helper_bulk_update_time_entries,
-    bulk_delete_time_entries as helper_bulk_delete_time_entries
+    bulk_delete_time_entries as helper_bulk_delete_time_entries,
+    advanced_search_time_entries as helper_advanced_search_time_entries,
+    full_text_search as helper_full_text_search
 )
 from helpers.projects import get_project_id_by_name
 from helpers.workspaces import get_default_workspace_id, get_workspace_id_by_name
@@ -666,3 +668,188 @@ def register_time_entry_tools(mcp: FastMCP, api_client: TogglApiClient):
         )
         
         return result
+        
+    @mcp.tool()
+    async def search_time_entries(
+        query: str,
+        fields: Optional[List[str]] = None,
+        case_sensitive: bool = False
+    ) -> Union[Dict[str, Any], str]:
+        """
+        Search for time entries containing specific text across multiple fields.
+        
+        This tool performs full-text search on time entries, looking for matches in the specified
+        fields. By default, it searches only the description field, but you can specify other
+        fields like "tags" to include in the search.
+        
+        Args:
+            query: Text to search for in time entries
+            fields: Fields to search in (defaults to just "description")
+            case_sensitive: Whether to perform case-sensitive search
+            
+        Returns:
+            Dict: Object containing matching time entries and timezone info
+            str: Error message if search fails
+        """
+        # Call the helper function
+        entries = await helper_full_text_search(
+            client=api_client,
+            query=query,
+            search_fields=fields,
+            case_sensitive=case_sensitive
+        )
+        
+        if isinstance(entries, str):  # Error message
+            return entries
+            
+        # Add local timezone information to each entry
+        enriched_entries = [
+            tz_converter.enrich_time_entry_with_local_times(entry)
+            for entry in entries
+        ]
+        
+        return {
+            "time_entries": enriched_entries,
+            "timezone_info": tz_converter.get_timezone_info(),
+            "count": len(enriched_entries)
+        }
+        
+    @mcp.tool()
+    async def advanced_search_time_entries(
+        search_text: Optional[str] = None,
+        project_names: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        min_duration_minutes: Optional[float] = None,
+        max_duration_minutes: Optional[float] = None,
+        billable: Optional[bool] = None,
+        case_sensitive: bool = False,
+        exact_match: bool = False,
+        workspace_name: Optional[str] = None
+    ) -> Union[Dict[str, Any], str]:
+        """
+        Perform comprehensive search with multiple filters on time entries.
+        
+        This powerful search tool allows you to find time entries using multiple criteria
+        simultaneously. You can filter by text, project, date range, tags, duration, 
+        and billable status.
+        
+        If `workspace_name` is not provided, set it as None.
+        
+        Use Cases:
+        - Find all billable entries for a specific project in a date range
+        - Search for entries containing specific text with certain tags
+        - Filter entries by duration to identify short/long tasks
+        
+        Args:
+            search_text: Text to search in descriptions (optional)
+            project_names: List of project names to filter by (optional)
+            start_date: Start of date range in local timezone (optional)
+            end_date: End of date range in local timezone (optional)
+            tags: List of tags to filter by (optional)
+            min_duration_minutes: Minimum duration in minutes (optional)
+            max_duration_minutes: Maximum duration in minutes (optional)
+            billable: Filter by billable status (optional)
+            case_sensitive: Whether text search is case-sensitive
+            exact_match: Whether text must match exactly or as substring
+            workspace_name: Workspace name to search in (optional)
+            
+        Returns:
+            Dict: Object containing matching time entries and search metadata
+            str: Error message if search fails
+        """
+        # Get workspace ID if provided
+        workspace_id = None
+        if workspace_name:
+            workspace_id = await get_workspace_id_by_name(api_client, workspace_name)
+            if isinstance(workspace_id, str):  # Error message
+                return workspace_id
+                
+        # Convert project names to IDs if provided
+        project_ids = None
+        if project_names:
+            project_ids = []
+            if workspace_id is None:
+                workspace_id = await get_default_workspace_id(api_client)
+                if isinstance(workspace_id, str):  # Error message
+                    return workspace_id
+                    
+            for project_name in project_names:
+                project_id = await get_project_id_by_name(
+                    api_client,
+                    project_name,
+                    workspace_id
+                )
+                
+                if isinstance(project_id, str):  # Error message
+                    return f"Error with project '{project_name}': {project_id}"
+                    
+                project_ids.append(project_id)
+                
+        # Convert duration from minutes to seconds if provided
+        min_duration_seconds = None
+        if min_duration_minutes is not None:
+            min_duration_seconds = int(min_duration_minutes * 60)
+            
+        max_duration_seconds = None
+        if max_duration_minutes is not None:
+            max_duration_seconds = int(max_duration_minutes * 60)
+            
+        # Convert date strings from local to UTC format
+        utc_start_date = None
+        if start_date:
+            utc_start_date, _ = tz_converter.local_to_utc(start_date)
+            
+        utc_end_date = None
+        if end_date:
+            utc_end_date, _ = tz_converter.local_to_utc(end_date)
+            
+        # Call helper function with processed parameters
+        entries = await helper_advanced_search_time_entries(
+            client=api_client,
+            search_text=search_text,
+            project_ids=project_ids,
+            start_date=utc_start_date,
+            end_date=utc_end_date,
+            tags=tags,
+            min_duration=min_duration_seconds,
+            max_duration=max_duration_seconds,
+            billable=billable,
+            case_sensitive=case_sensitive,
+            exact_match=exact_match,
+            workspace_id=workspace_id
+        )
+        
+        if isinstance(entries, str):  # Error message
+            return entries
+            
+        # Add local timezone information to each entry
+        enriched_entries = [
+            tz_converter.enrich_time_entry_with_local_times(entry)
+            for entry in entries
+        ]
+        
+        # Create a comprehensive response with search metadata
+        search_criteria = {
+            "search_text": search_text,
+            "project_names": project_names,
+            "project_ids": project_ids,
+            "start_date": start_date,
+            "end_date": end_date,
+            "tags": tags,
+            "min_duration_minutes": min_duration_minutes,
+            "max_duration_minutes": max_duration_minutes,
+            "billable": billable,
+            "case_sensitive": case_sensitive,
+            "exact_match": exact_match,
+            "workspace_name": workspace_name,
+            "workspace_id": workspace_id
+        }
+        
+        return {
+            "time_entries": enriched_entries,
+            "timezone_info": tz_converter.get_timezone_info(),
+            "count": len(enriched_entries),
+            "search_criteria": search_criteria
+        }
