@@ -11,7 +11,6 @@ The Toggl MCP Server provides a comprehensive set of tools for interacting with 
 - **Bulk Operations**: Perform operations on multiple time entries at once
 - **Advanced Search**: Find time entries with powerful filtering and full-text search
 - **Context-Aware Tools**: Get rich information about your current work context
-- **Automation**: Save and apply timer presets and recurring entry configurations
 - **Convenience Functions**: Quickly resume, duplicate, or split time entries
 
 ### Tools
@@ -189,50 +188,6 @@ The Toggl MCP Server provides a comprehensive set of tools for interacting with 
     - `workspace_name` (str, optional): Name of the workspace containing the entry.
   - **Output**: JSON response containing the new time entry and reference to the continued entry.
 
-#### Automation Features
-
-- **save_timer_preset**
-  - **Description**: Saves a time entry configuration as a preset for future use.
-  - **Input**:
-    - `name` (str): Name for the preset.
-    - `description` (str, optional): Description for entries created with this preset.
-    - `project_name` (str, optional): Project name for the preset.
-    - `workspace_name` (str, optional): Workspace name for the preset.
-    - `tags` (List[str], optional): List of tags to apply.
-    - `billable` (bool, optional): Whether entries are billable.
-  - **Output**: JSON response containing the saved preset data.
-
-- **start_timer_with_preset**
-  - **Description**: Starts a new time entry using a saved preset configuration.
-  - **Input**:
-    - `preset_name` (str): Name of the preset to use.
-  - **Output**: JSON response containing the new time entry data.
-
-- **list_timer_presets**
-  - **Description**: Gets all saved timer presets.
-  - **Input**: None.
-  - **Output**: JSON response containing all timer presets.
-
-- **create_recurring_entry**
-  - **Description**: Creates a recurring time entry configuration.
-  - **Input**:
-    - `description` (str): Description for recurring time entries.
-    - `schedule` (Dict): Dictionary defining recurrence pattern.
-    - `project_name` (str, optional): Project to associate with the entries.
-    - `workspace_name` (str, optional): Workspace name.
-    - `tags` (List[str], optional): List of tags to apply.
-    - `billable` (bool, optional): Whether entries are billable.
-    - `duration_minutes` (int, optional): Default duration in minutes.
-  - **Output**: JSON response containing the created recurring entry configuration.
-
-- **run_recurring_entry**
-  - **Description**: Manually runs a recurring entry configuration to create a time entry.
-  - **Input**:
-    - `entry_id` (str): ID of the recurring entry to run.
-    - `start_time` (str, optional): Custom start time.
-    - `end_time` (str, optional): Custom end time.
-  - **Output**: JSON response containing the created time entry data.
-
 #### Convenience Functions
 
 - **resume_time_entry**
@@ -267,16 +222,13 @@ The Toggl MCP Server is organized into the following modules:
   - `projects.py`: Functions for managing Toggl projects
   - `time_entries.py`: Functions for managing Toggl time entries
   - `workspaces.py`: Functions for managing Toggl workspaces
-  - `automation.py`: Functions for presets and recurring entries
 
 - **tools/**: Houses MCP tool definitions
   - `project_tools.py`: MCP tools for project management
   - `time_entry_tools.py`: MCP tools for time entry management
-  - `automation_tools.py`: MCP tools for automation features
 
 - **utils/**: Utility modules
   - `timezone.py`: Timezone conversion and formatting utilities
-  - `storage.py`: Persistent storage for presets and configurations
 
 - **toggl_mcp_server.py**: Main entry point that registers tools and resources
 

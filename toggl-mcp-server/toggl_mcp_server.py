@@ -12,7 +12,6 @@ from mcp.server.fastmcp import FastMCP
 from api.client import TogglApiClient
 from tools.project_tools import register_project_tools
 from tools.time_entry_tools import register_time_entry_tools
-from tools.automation_tools import register_automation_tools
 
 # Load environment variables
 load_dotenv()
@@ -41,7 +40,6 @@ def create_mcp_server():
     # Register operation tools
     register_project_tools(mcp, api_client)
     register_time_entry_tools(mcp, api_client)
-    register_automation_tools(mcp, api_client)
 
     # Register data resources
     @mcp.resource("toggl:://entities/{workspace_id}/projects")
